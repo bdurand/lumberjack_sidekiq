@@ -76,6 +76,34 @@ logger.tag(user_id: 123, request_id: "abc-def") do
 end
 ```
 
+### Adding Additional Metadata
+
+You can add additional metadata to your job logs by adding your own server middleware. Job logging sets up a tag context so any tags you add in your middleware will be included in the job log when it finishes.
+
+Tags added before the `yield` in your middleware will be included in all logs for the job processing. Tags added after the `yield` will only be included in the final final job lifecycle event log.
+
+```ruby
+class MyLogTaggingMiddleware
+  include Sidekiq::ServerMiddleware
+
+  def call(worker, job, queue)
+    # Add tag_1 to all logs for this job.
+    Sidekiq.logger.tag(tag_1: job["value_1"]) if Sidekiq.logger.is_a?(Lumberjack::Logger)
+
+    yield
+
+    # Add tag_2 only to the final job log only.
+    Sidekiq.logger.tag(tag_2: job["value_2"]) if Sidekiq.logger.is_a?(Lumberjack::Logger)
+  end
+end
+
+Sidekiq.configure_server do |config|
+  config.server_middleware do |chain|
+    chain.add MyLogTaggingMiddleware
+  end
+end
+```
+
 ### Job-Level Logging Options
 
 You can control logging behavior on a per-job basis by setting logging options:
@@ -121,6 +149,14 @@ You can disable logging the enqueued time by setting `:skip_enqueued_time_loggin
 ```ruby
 Sidekiq.configure_server do |config|
   config[:skip_enqueued_time_logging] = true
+end
+```
+
+You can disable logging any job arguments by setting `:skip_logging_arguments` to `true`.
+
+```ruby
+Sidekiq.configure_server do |config|
+  config[:skip_logging_arguments] = true
 end
 ```
 
