@@ -30,6 +30,7 @@ class Lumberjack::Sidekiq::JobLogger
     @config = config
     @logger = @config.logger
     @prefix = @config[:log_tag_prefix] || ""
+    @message_formatter = @config[:job_logger_message_formatter] || Lumberjack::Sidekiq::MessageFormatter.new(@config)
   end
 
   def call(job, _queue)
@@ -41,7 +42,7 @@ class Lumberjack::Sidekiq::JobLogger
       yield
 
       log_end_job(job, start, enqueued_time) unless skip_logging?(job)
-    rescue Exception => err
+    rescue Exception => err # rubocop:disable Lint/RescueException
       log_failed_job(job, err, start, enqueued_time) unless skip_logging?(job)
 
       raise
@@ -70,10 +71,6 @@ class Lumberjack::Sidekiq::JobLogger
     @config[:skip_enqueued_time_logging] || false
   end
 
-  def skip_logging_arguments?(job)
-    @config[:skip_logging_arguments] || false
-  end
-
   def prepare(job, &block)
     return yield unless @logger.is_a?(Lumberjack::Logger)
 
@@ -100,17 +97,17 @@ class Lumberjack::Sidekiq::JobLogger
   private
 
   def log_start_job(job)
-    message = "Start Sidekiq job #{job_info(job)}"
+    message = @message_formatter.start_job(job)
     if @logger.is_a?(Lumberjack::Logger)
       tags = job_tags(job)
-     @logger.info(message, tags)
+      @logger.info(message, tags)
     else
       @logger.info(message)
     end
   end
 
   def log_end_job(job, start, enqueued_time)
-    message = "Finished Sidekiq job #{job_info(job)}"
+    message = @message_formatter.end_job(job, elapsed_time(start))
     if @logger.is_a?(Lumberjack::Logger)
       tags = job_tags(job)
       tags["#{@prefix}duration"] = elapsed_time(start)
@@ -122,7 +119,7 @@ class Lumberjack::Sidekiq::JobLogger
   end
 
   def log_failed_job(job, err, start, enqueued_time)
-    message = "Failed Sidekiq job #{job_info(job)}"
+    message = @message_formatter.failed_job(job, err, elapsed_time(start))
     if @logger.is_a?(Lumberjack::Logger)
       tags = job_tags(job)
       tags["#{@prefix}duration"] = elapsed_time(start)
@@ -147,40 +144,6 @@ class Lumberjack::Sidekiq::JobLogger
     enqueued_ms = ((Time.now.to_f * 1000) - enqueued_at).round
     enqueued_ms = 0 if enqueued_ms < 0
     enqueued_ms
-  end
-
-  def job_info(job)
-    return worker_class(job) if skip_logging_arguments?(job)
-
-    logger_options = job["logging"] || {}
-    args_filter = logger_options["args"]
-    args = job["args"]
-    display_args = if args_filter == true || args_filter.nil?
-      args
-    elsif args_filter.is_a?(Array)
-      filtered_args(job, args, args_filter)
-    else
-      ["..."]
-    end
-
-    "#{worker_class(job)}.perform(#{display_args.join(", ")})"
-  end
-
-  def filtered_args(job, args, args_filter)
-    class_name = job["wrapped"] || job["class"]
-    klass = Object.const_get(class_name) if class_name && Object.const_defined?(class_name)
-    return ["..."] unless klass.is_a?(Class)
-    return ["..."] unless klass.instance_methods.include?(:perform)
-
-    perform_args = klass.instance_method(:perform).parameters
-    args.each_with_index.map do |arg, index|
-      arg_name = perform_args[index][1] if perform_args[index]
-      if args_filter.include?(arg_name.to_s)
-        arg.inspect
-      else
-        "-"
-      end
-    end
   end
 
   def job_tags(job)

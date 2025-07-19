@@ -152,11 +152,19 @@ Sidekiq.configure_server do |config|
 end
 ```
 
-You can disable logging any job arguments by setting `:skip_logging_arguments` to `true`.
+You can disable logging any job arguments by setting `:skip_logging_job_arguments` to `true`.
 
 ```ruby
 Sidekiq.configure_server do |config|
-  config[:skip_logging_arguments] = true
+  config[:skip_logging_job_arguments] = true
+end
+```
+
+You can customize the message format by implementing your own `Lumberjack::Sidekiq::MessageFormatter` and setting it in the configuration. You can use this if you existing log processing pipeline is expecting specific message formats.
+
+```ruby
+Sidekiq.configure_server do |config|
+  config[:job_logger_message_formatter] = MyCustomMessageFormatter.new(config)
 end
 ```
 
@@ -165,13 +173,12 @@ end
 Add this line to your application's Gemfile:
 
 ```ruby
-```ruby
-gem 'lumberjack_sidekiq'
+gem "lumberjack_sidekiq"
 ```
 
 And then execute:
 ```bash
-$ bundle
+$ bundle install
 ```
 
 Or install it yourself as:

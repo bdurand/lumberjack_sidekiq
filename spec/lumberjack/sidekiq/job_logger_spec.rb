@@ -308,8 +308,8 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         expect(out.string).to include("MyWorker.perform(1, 2, -)")
       end
 
-      it "does not log any arguments if skip_logging_arguments is true" do
-        config[:skip_logging_arguments] = true
+      it "does not log any arguments if skip_logging_job_arguments is true" do
+        config[:skip_logging_job_arguments] = true
         job_logger.call(job, "default") do
           # Simulate job processing
         end
