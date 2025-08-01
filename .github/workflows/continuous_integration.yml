@@ -27,7 +27,7 @@ jobs:
         include:
           - ruby: "ruby"
             standardrb: true
-          - ruby: "3.0"
+          - ruby: "3.2"
             appraisal: "sidekiq_8"
           - ruby: "2.7"
             appraisal: "sidekiq_7"
