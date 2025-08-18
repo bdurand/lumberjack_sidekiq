@@ -87,7 +87,7 @@ class Lumberjack::Sidekiq::JobLogger
     @logger.tag(tags) do
       level = job.dig("logging", "level") || job["log_level"]
       if level
-        @logger.silence(level, &block)
+        @logger.with_level(level, &block)
       else
         yield
       end
