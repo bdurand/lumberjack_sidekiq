@@ -4,20 +4,20 @@
 [![Ruby Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://github.com/testdouble/standard)
 [![Gem Version](https://badge.fury.io/rb/lumberjack_sidekiq.svg)](https://badge.fury.io/rb/lumberjack_sidekiq)
 
-This gem provides an enhanced logging setup for [Sidekiq](https://github.com/mperham/sidekiq) using the [lumberjack](https://github.com/bdurand/lumberjack) structured logging framework. It replaces Sidekiq's default job logging behavior with one that provides rich structured logging with automatic tagging, timing information, and context propagation.
+This gem provides an enhanced logging setup for [Sidekiq](https://github.com/mperham/sidekiq) using the [lumberjack](https://github.com/bdurand/lumberjack) structured logging framework. It replaces Sidekiq's default job logging behavior with one that provides rich structured logging with automatic attributeging, timing information, and context propagation.
 
 **Key Features:**
 
-- **Structured Job Logging**: Automatically adds structured tags for job metadata (class, job ID, queue, duration, etc.)
-- **Context Propagation**: Pass log tags from client to server to maintain request context across job execution
-- **Flexible Configuration**: Control logging behavior per job with options for log levels, argument filtering, and custom tags
+- **Structured Job Logging**: Automatically adds structured attributes for job metadata (class, job ID, queue, duration, etc.)
+- **Context Propagation**: Pass log attributes from client to server to maintain request context across job execution
+- **Flexible Configuration**: Control logging behavior per job with options for log levels, argument filtering, and custom attributes
 - **Performance Tracking**: Automatic timing of job execution and queue wait times
 
 ## Usage
 
 ### Job Logger
 
-The `Lumberjack::Sidekiq::JobLogger` provides structured logging for Sidekiq jobs with automatic tagging and timing information.
+The `Lumberjack::Sidekiq::JobLogger` provides structured logging for Sidekiq jobs with automatic attributeging and timing information.
 
 To use it, configure Sidekiq to use the Lumberjack job logger:
 
@@ -34,7 +34,7 @@ Sidekiq.configure_server do |config|
 end
 ```
 
-The job logger automatically adds structured tags to your log entries:
+The job logger automatically adds structured attributes to your log entries:
 
 - `class` - The worker class name
 - `jid` - The job ID
@@ -43,63 +43,63 @@ The job logger automatically adds structured tags to your log entries:
 - `duration` - Job execution time in seconds
 - `enqueued_ms` - Time the job was queued before execution
 - `retry_count` - Number of retries (if > 0)
-- `tags` - Any custom Sidekiq tags
+- `attributes` - Any custom Sidekiq attributes
 
-You can add an optional prefix to all tags:
+You can add an optional prefix to all attributes:
 
 ```ruby
 Sidekiq.configure_server do |config|
-  config[:log_tag_prefix] = "sidekiq."
+  config[:log_attribute_prefix] = "sidekiq."
 end
 ```
 
-### Tag Passthrough Middleware
+### attribute Passthrough Middleware
 
-The `Lumberjack::Sidekiq::TagPassthroughMiddleware` allows you to pass log tags from the client (where jobs are enqueued) to the server (where jobs are executed). This is useful for maintaining context like user IDs or request IDs across the job execution.
+The `Lumberjack::Sidekiq::AttributePassthroughMiddleware` allows you to pass log attributes from the client (where jobs are enqueued) to the server (where jobs are executed). This is useful for maintaining context like user IDs or request IDs across the job execution.
 
 Configure the middleware on the client side:
 
 ```ruby
 Sidekiq.configure_client do |config|
   config.client_middleware do |chain|
-    # Pass through :user_id and :request_id tags to the job logger
-    chain.add(Lumberjack::Sidekiq::TagPassthroughMiddleware, :user_id, :request_id)
+    # Pass through :user_id and :request_id attributes to the job logger
+    chain.add(Lumberjack::Sidekiq::AttributePassthroughMiddleware, :user_id, :request_id)
   end
 end
 ```
 
-Now when you enqueue a job with those tags in the current logging context, they will be propagated to the logs when the job runs.
+Now when you enqueue a job with those attributes in the current logging context, they will be propagated to the logs when the job runs.
 
 ```ruby
-logger.tag(user_id: 123, request_id: "abc-def") do
+logger.attribute(user_id: 123, request_id: "abc-def") do
   MyWorker.perform_async(params)
 end
 ```
 
 ### Adding Additional Metadata
 
-You can add additional metadata to your job logs by adding your own server middleware. Job logging sets up a tag context so any tags you add in your middleware will be included in the job log when it finishes.
+You can add additional metadata to your job logs by adding your own server middleware. Job logging sets up an attribute context so any attributes you add in your middleware will be included in the job log when it finishes.
 
-Tags added before the `yield` in your middleware will be included in all logs for the job processing. Tags added after the `yield` will only be included in the final final job lifecycle event log.
+attributes added before the `yield` in your middleware will be included in all logs for the job processing. attributes added after the `yield` will only be included in the final final job lifecycle event log.
 
 ```ruby
-class MyLogTaggingMiddleware
+class MyLogattributegingMiddleware
   include Sidekiq::ServerMiddleware
 
   def call(worker, job, queue)
-    # Add tag_1 to all logs for this job.
-    Sidekiq.logger.tag(tag_1: job["value_1"]) if Sidekiq.logger.is_a?(Lumberjack::Logger)
+    # Add attribute_1 to all logs for this job.
+    Sidekiq.logger.attribute(attribute_1: job["value_1"]) if Sidekiq.logger.is_a?(Lumberjack::Logger)
 
     yield
 
-    # Add tag_2 only to the final job log only.
-    Sidekiq.logger.tag(tag_2: job["value_2"]) if Sidekiq.logger.is_a?(Lumberjack::Logger)
+    # Add attribute_2 only to the final job log only.
+    Sidekiq.logger.attribute(attribute_2: job["value_2"]) if Sidekiq.logger.is_a?(Lumberjack::Logger)
   end
 end
 
 Sidekiq.configure_server do |config|
   config.server_middleware do |chain|
-    chain.add MyLogTaggingMiddleware
+    chain.add MyLogattributegingMiddleware
   end
 end
 ```
@@ -117,7 +117,7 @@ class MyWorker
     skip: false,             # Skip logging lifecycle events for this job
     skip_start: true,        # Skip the "Start job" lifecycle log message
     args: ["param1"],        # Only log specific arguments by name; can specify false to omit all args
-    tags: {custom: "value"}  # Add custom tags to job logs
+    attributes: {custom: "value"}  # Add custom attributes to job logs
   }
 
   def perform(param1, param2)
@@ -136,11 +136,11 @@ Sidekiq.configure_server do |config|
 end
 ```
 
-You can add a prefix to all automatically generated log tags by setting `:log_tag_prefix`.
+You can add a prefix to all automatically generated log attributes by setting `:log_attribute_prefix`.
 
 ```ruby
 Sidekiq.configure_server do |config|
-  config[:log_tag_prefix] = "sidekiq."
+  config[:log_attribute_prefix] = "sidekiq."
 end
 ```
 

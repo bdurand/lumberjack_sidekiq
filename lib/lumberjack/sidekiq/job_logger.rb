@@ -2,7 +2,7 @@
 
 # This is a replacement for Sidekiq's built in JobLogger. Like the built in JobLogger, it
 # will log job lifecycle events (start, end, failure) with timing information and job metadata.
-# It the standard metadata for jobs:
+# It will include the standard metadata for jobs:
 # - Job class name
 # - Job ID
 # - Duration of job execution
@@ -29,7 +29,7 @@ class Lumberjack::Sidekiq::JobLogger
   def initialize(config)
     @config = config
     @logger = @config.logger
-    @prefix = @config[:log_tag_prefix] || ""
+    @prefix = @config[:log_attribute_prefix] || ""
     @message_formatter = @config[:job_logger_message_formatter] || Lumberjack::Sidekiq::MessageFormatter.new(@config)
   end
 
@@ -74,17 +74,17 @@ class Lumberjack::Sidekiq::JobLogger
   def prepare(job, &block)
     return yield unless @logger.is_a?(Lumberjack::Logger)
 
-    tags = {
+    attributes = {
       "#{@prefix}class" => worker_class(job),
       "#{@prefix}jid" => job["jid"]
     }
-    tags["#{@prefix}bid"] = job["bid"] if job.include?("bid")
-    tags["#{@prefix}tags"] = job["tags"] if job.include?("tags")
+    attributes["#{@prefix}bid"] = job["bid"] if job.include?("bid")
+    attributes["#{@prefix}attributes"] = job["attributes"] if job.include?("attributes")
 
-    persisted_tags = passthrough_tags(job)
-    tags.merge!(persisted_tags) if persisted_tags.is_a?(Hash)
+    persisted_attributes = passthrough_attributes(job)
+    attributes.merge!(persisted_attributes) if persisted_attributes.is_a?(Hash)
 
-    @logger.tag(tags) do
+    @logger.tag(attributes) do
       level = job.dig("logging", "level") || job["log_level"]
       if level
         @logger.with_level(level, &block)
@@ -99,8 +99,8 @@ class Lumberjack::Sidekiq::JobLogger
   def log_start_job(job)
     message = @message_formatter.start_job(job)
     if @logger.is_a?(Lumberjack::Logger)
-      tags = job_tags(job)
-      @logger.info(message, tags)
+      attributes = job_attributes(job)
+      @logger.info(message, attributes)
     else
       @logger.info(message)
     end
@@ -109,10 +109,10 @@ class Lumberjack::Sidekiq::JobLogger
   def log_end_job(job, start, enqueued_time)
     message = @message_formatter.end_job(job, elapsed_time(start))
     if @logger.is_a?(Lumberjack::Logger)
-      tags = job_tags(job)
-      tags["#{@prefix}duration"] = elapsed_time(start)
-      tags["#{@prefix}enqueued_ms"] = enqueued_time if enqueued_time
-      @logger.info(message, tags)
+      attributes = job_attributes(job)
+      attributes["#{@prefix}duration"] = elapsed_time(start)
+      attributes["#{@prefix}enqueued_ms"] = enqueued_time if enqueued_time
+      @logger.info(message, attributes)
     else
       @logger.info(message)
     end
@@ -121,10 +121,10 @@ class Lumberjack::Sidekiq::JobLogger
   def log_failed_job(job, err, start, enqueued_time)
     message = @message_formatter.failed_job(job, err, elapsed_time(start))
     if @logger.is_a?(Lumberjack::Logger)
-      tags = job_tags(job)
-      tags["#{@prefix}duration"] = elapsed_time(start)
-      tags["#{@prefix}enqueued_ms"] = enqueued_time if enqueued_time
-      @logger.error(message, tags)
+      attributes = job_attributes(job)
+      attributes["#{@prefix}duration"] = elapsed_time(start)
+      attributes["#{@prefix}enqueued_ms"] = enqueued_time if enqueued_time
+      @logger.error(message, attributes)
     else
       @logger.error(message)
     end
@@ -146,26 +146,26 @@ class Lumberjack::Sidekiq::JobLogger
     enqueued_ms
   end
 
-  def job_tags(job)
-    tags = {}
+  def job_attributes(job)
+    attributes = {}
 
     retry_count = job["retry_count"]
-    tags["#{@prefix}retry_count"] = retry_count if retry_count && retry_count > 0
+    attributes["#{@prefix}retry_count"] = retry_count if retry_count && retry_count > 0
 
-    tags["#{@prefix}queue"] = job["queue"] if job["queue"]
+    attributes["#{@prefix}queue"] = job["queue"] if job["queue"]
 
-    ::Sidekiq::Context.current&.each do |tag, value|
-      tags["#{@prefix}#{tag}"] = value
+    ::Sidekiq::Context.current&.each do |attribute, value|
+      attributes["#{@prefix}#{attribute}"] = value
     end
 
-    tags
+    attributes
   end
 
   def worker_class(job)
     job["display_class"] || job["wrapped"] || job["class"]
   end
 
-  def passthrough_tags(job)
-    job.dig("logging", "tags")
+  def passthrough_attributes(job)
+    job.dig("logging", "attributes")
   end
 end

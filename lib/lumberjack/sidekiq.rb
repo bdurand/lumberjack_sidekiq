@@ -8,4 +8,4 @@ end
 
 require_relative "sidekiq/job_logger"
 require_relative "sidekiq/message_formatter"
-require_relative "sidekiq/tag_passthrough_middleware"
+require_relative "sidekiq/attribute_passthrough_middleware"
