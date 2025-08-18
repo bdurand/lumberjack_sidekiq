@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking Change** Changed config option `log_tag_prefix` to `log_attributes_prefix`
-- **Breaking Change** Renamed `Lumberjack::Sidekiq::TagPassthroughMiddleware` to `Lumberjack::Sidekiq::AttributePassthroughMiddleware`.
+- **Breaking Change** Updated terminology to match Lumberjack 2 change to refer to "attributes" rather than "tags".
+  - Changed config option `log_tag_prefix` to `log_attributes_prefix`
+  - Renamed `Lumberjack::Sidekiq::TagPassthroughMiddleware` to `Lumberjack::Sidekiq::AttributePassthroughMiddleware`.
 
 ## 1.0.1
 
