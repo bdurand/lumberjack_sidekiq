@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Lumberjack 2 support.
+- Added Lumberjack global context around the job logger.
 
 ### Changed
 

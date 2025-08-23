@@ -84,12 +84,14 @@ class Lumberjack::Sidekiq::JobLogger
     persisted_attributes = passthrough_attributes(job)
     attributes.merge!(persisted_attributes) if persisted_attributes.is_a?(Hash)
 
-    @logger.tag(attributes) do
-      level = job.dig("logging", "level") || job["log_level"]
-      if level
-        @logger.with_level(level, &block)
-      else
-        yield
+    Lumberjack.context do
+      @logger.tag(attributes) do
+        level = job.dig("logging", "level") || job["log_level"]
+        if level
+          @logger.with_level(level, &block)
+        else
+          yield
+        end
       end
     end
   end
