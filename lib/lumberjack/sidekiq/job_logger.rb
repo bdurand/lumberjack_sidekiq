@@ -21,10 +21,10 @@
 #
 #   sidekiq_options logging: {args: [:arg1]} # only `arg1` will appear in the logs
 #
-# @example
-# Sidekiq.configure_server do |config|
-#   config.logger = Lumberjack::Sidekiq::JobLogger.new(config)
-# end
+# @example Setting up the job logger
+#   Sidekiq.configure_server do |config|
+#     config.logger = Lumberjack::Sidekiq::JobLogger.new(config)
+#   end
 class Lumberjack::Sidekiq::JobLogger
   def initialize(config)
     @config = config
@@ -33,6 +33,13 @@ class Lumberjack::Sidekiq::JobLogger
     @message_formatter = @config[:job_logger_message_formatter] || Lumberjack::Sidekiq::MessageFormatter.new(@config)
   end
 
+  # Sidekiq server middleware hook that logs job lifecycle events (start, completion, failure)
+  # with timing information and job metadata.
+  #
+  # @param job [Hash] The job hash containing job data
+  # @param _queue [String] The queue name (unused)
+  # @yield The job execution block
+  # @return [void]
   def call(job, _queue)
     enqueued_time = enqueued_time_ms(job) unless skip_enqueued_time_logging?
     begin
@@ -71,6 +78,13 @@ class Lumberjack::Sidekiq::JobLogger
     @config[:skip_enqueued_time_logging] || false
   end
 
+  # Prepares the logging context for a job by setting up Lumberjack attributes and
+  # executing the block within that context. This includes job metadata like class name,
+  # job ID, and any attributes passed through from the client.
+  #
+  # @param job [Hash] The job hash containing job data
+  # @yield The block to execute within the logging context
+  # @return [void]
   def prepare(job, &block)
     return yield unless @logger.is_a?(Lumberjack::Logger)
 

@@ -98,7 +98,7 @@ module Lumberjack::Sidekiq
 
     # Helper method to get the job worker class name. If the job has a `display_class` or `wrapped` key,
     # it will return that value for logging purposes.
-    #     #
+    #
     # @param job [Hash] The job data.
     # @return [String] The worker class name.
     def worker_class(job)
