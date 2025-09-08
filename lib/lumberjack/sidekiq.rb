@@ -6,6 +6,7 @@ require "sidekiq"
 # Lumberjack Sidekiq integration module that provides enhanced logging capabilities
 # for Sidekiq jobs with support for structured logging and attribute passthrough.
 module Lumberjack::Sidekiq
+  VERSION = File.read(File.expand_path("../../../VERSION", __FILE__)).strip.freeze
 end
 
 require_relative "sidekiq/job_logger"
