@@ -19,7 +19,7 @@ module Lumberjack::Sidekiq
   # `end_job`, and `failed_job` methods and set it in your Sidekiq configuration:
   #
   #   Sidekiq.configure_server do |config|
-  #     config.job_logger_message_formatter = MyCustomFormatter.new(config)
+  #     config[:job_logger_message_formatter] = MyCustomFormatter.new(config)
   #   end
   class MessageFormatter
     # @param config [::Sidekiq::Config] The Sidekiq configuration.
@@ -89,7 +89,7 @@ module Lumberjack::Sidekiq
       end
     end
 
-    # Returns true of job arguments should never be logged.
+    # Returns true if job arguments should never be logged.
     #
     # @return [Boolean] True if job arguments should not be logged.
     def skip_logging_job_arguments?
@@ -107,6 +107,12 @@ module Lumberjack::Sidekiq
 
     private
 
+    # Filters job arguments based on the args filter configuration.
+    #
+    # @param job [Hash] The job data
+    # @param args [Array] The job arguments
+    # @param args_filter [Array] The list of argument names to include
+    # @return [Array<String>] The filtered arguments for display
     def filtered_args(job, args, args_filter)
       class_name = job["wrapped"] || job["class"]
       klass = Object.const_get(class_name) if class_name && Object.const_defined?(class_name)

@@ -13,7 +13,7 @@
 # - Retry count
 # - Enqueued time in milliseconds (if available)
 #
-# Log messages will also include more information to be human readable include the jog arguments:
+# Log messages will also include more information to be human readable including the job arguments:
 #
 #   Finished Sidekiq job MyWorker.perform("foo", 12)`
 #
@@ -23,9 +23,13 @@
 #
 # @example Setting up the job logger
 #   Sidekiq.configure_server do |config|
-#     config.logger = Lumberjack::Sidekiq::JobLogger.new(config)
+#     config.logger = Lumberjack::Logger.new(STDOUT)
+#     config[:job_logger] = Lumberjack::Sidekiq::JobLogger
 #   end
 class Lumberjack::Sidekiq::JobLogger
+  # Creates a new JobLogger instance.
+  #
+  # @param config [Sidekiq::Config] The Sidekiq configuration object
   def initialize(config)
     @config = config
     @logger = @config.logger
@@ -56,7 +60,10 @@ class Lumberjack::Sidekiq::JobLogger
     end
   end
 
-  # If true don't log the start of the job.
+  # Determines if start job logging should be skipped for the given job.
+  #
+  # @param job [Hash] The job hash containing job data
+  # @return [Boolean] true if start logging should be skipped
   def skip_start_job_logging?(job)
     return true if @config[:skip_start_job_logging]
     return true if skip_logging?(job)
@@ -67,6 +74,10 @@ class Lumberjack::Sidekiq::JobLogger
     !!logging_options["skip_start"]
   end
 
+  # Determines if logging should be skipped entirely for the given job.
+  #
+  # @param job [Hash] The job hash containing job data
+  # @return [Boolean] true if logging should be skipped
   def skip_logging?(job)
     logging_options = job["logging"]
     return false unless logging_options.is_a?(Hash)
@@ -74,6 +85,9 @@ class Lumberjack::Sidekiq::JobLogger
     !!logging_options["skip"]
   end
 
+  # Determines if enqueued time logging should be skipped globally.
+  #
+  # @return [Boolean] true if enqueued time logging should be skipped
   def skip_enqueued_time_logging?
     @config[:skip_enqueued_time_logging] || false
   end
@@ -112,6 +126,9 @@ class Lumberjack::Sidekiq::JobLogger
 
   private
 
+  # Logs the start of a job.
+  #
+  # @param job [Hash] The job hash containing job data
   def log_start_job(job)
     message = @message_formatter.start_job(job)
     if @logger.is_a?(Lumberjack::Logger)
@@ -122,6 +139,11 @@ class Lumberjack::Sidekiq::JobLogger
     end
   end
 
+  # Logs the successful completion of a job.
+  #
+  # @param job [Hash] The job hash containing job data
+  # @param start [Float] The start time from Process.clock_gettime
+  # @param enqueued_time [Integer, nil] The enqueued time in milliseconds
   def log_end_job(job, start, enqueued_time)
     message = @message_formatter.end_job(job, elapsed_time(start))
     if @logger.is_a?(Lumberjack::Logger)
@@ -134,6 +156,12 @@ class Lumberjack::Sidekiq::JobLogger
     end
   end
 
+  # Logs the failure of a job.
+  #
+  # @param job [Hash] The job hash containing job data
+  # @param err [Exception] The exception that caused the failure
+  # @param start [Float] The start time from Process.clock_gettime
+  # @param enqueued_time [Integer, nil] The enqueued time in milliseconds
   def log_failed_job(job, err, start, enqueued_time)
     message = @message_formatter.failed_job(job, err, elapsed_time(start))
     if @logger.is_a?(Lumberjack::Logger)
@@ -146,10 +174,18 @@ class Lumberjack::Sidekiq::JobLogger
     end
   end
 
+  # Calculates the elapsed time since start.
+  #
+  # @param start [Float] The start time from Process.clock_gettime
+  # @return [Float] The elapsed time in seconds
   def elapsed_time(start)
     (::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - start).round(6)
   end
 
+  # Calculates the enqueued time in milliseconds.
+  #
+  # @param job [Hash] The job hash containing job data
+  # @return [Integer, nil] The enqueued time in milliseconds or nil if not available
   def enqueued_time_ms(job)
     enqueued_at = job["enqueued_at"]
     return nil unless enqueued_at.is_a?(Numeric)
@@ -162,6 +198,10 @@ class Lumberjack::Sidekiq::JobLogger
     enqueued_ms
   end
 
+  # Builds job attributes hash for logging.
+  #
+  # @param job [Hash] The job hash containing job data
+  # @return [Hash] Hash of attributes to add to the log entry
   def job_attributes(job)
     attributes = {}
 
@@ -177,10 +217,18 @@ class Lumberjack::Sidekiq::JobLogger
     attributes
   end
 
+  # Extracts the worker class name from job data.
+  #
+  # @param job [Hash] The job hash containing job data
+  # @return [String] The worker class name
   def worker_class(job)
     job["display_class"] || job["wrapped"] || job["class"]
   end
 
+  # Extracts passthrough attributes from job logging configuration.
+  #
+  # @param job [Hash] The job hash containing job data
+  # @return [Hash, nil] The passthrough attributes or nil if none
   def passthrough_attributes(job)
     job.dig("logging", "attributes")
   end

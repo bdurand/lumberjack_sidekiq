@@ -54,6 +54,9 @@ class Lumberjack::Sidekiq::AttributePassthroughMiddleware
 
   private
 
+  # Gets logger attributes helper for extracting formatted attributes.
+  #
+  # @return [Lumberjack::AttributesHelper] Helper for accessing formatted attributes
   def logger_attributes_helper
     attributes = Sidekiq.logger.attributes
     formatter = Sidekiq.logger.attribute_formatter
@@ -63,6 +66,10 @@ class Lumberjack::Sidekiq::AttributePassthroughMiddleware
     Lumberjack::AttributesHelper.new(attributes)
   end
 
+  # Converts a value to a JSON-safe format.
+  #
+  # @param value [Object] The value to convert
+  # @return [Object, nil] JSON-safe value or nil if conversion fails
   def json_value(value)
     return nil if value.nil?
     return value if JSON_SAFE_TYPES.include?(value.class)
