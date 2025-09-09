@@ -3,7 +3,7 @@
 require "json"
 
 # Sidekiq client middleware that can pass through log attributes from the current Lumberjack
-# logger to job logger when the job is executed on the Sidekiq server. This can be
+# logger to the job logger when the job is executed on the Sidekiq server. This can be
 # useful to maintain context in logs when a job is executed.
 #
 # @example Adding middleware to pass through attributes
@@ -19,6 +19,8 @@ class Lumberjack::Sidekiq::AttributePassthroughMiddleware
   # Types that can be safely serialized to JSON without losing information
   JSON_SAFE_TYPES = [String, Integer, Float, TrueClass, FalseClass].freeze
 
+  # Initializes the middleware with the specified attributes to pass through.
+  #
   # @param pass_through_attributes [Array<String, Symbol>] Log attributes to pass through to the job logger when the job is executed.
   def initialize(*pass_through_attributes)
     @pass_through_attributes = pass_through_attributes.flatten.map(&:to_s)
@@ -54,6 +56,9 @@ class Lumberjack::Sidekiq::AttributePassthroughMiddleware
 
   private
 
+  # Helper method to get current logger attributes with formatting applied.
+  #
+  # @return [Lumberjack::AttributesHelper] Helper object for accessing formatted attributes
   def logger_attributes_helper
     attributes = Sidekiq.logger.attributes
     formatter = Sidekiq.logger.attribute_formatter
@@ -63,6 +68,10 @@ class Lumberjack::Sidekiq::AttributePassthroughMiddleware
     Lumberjack::AttributesHelper.new(attributes)
   end
 
+  # Converts a value to a JSON-safe format for storage in job data.
+  #
+  # @param value [Object] The value to convert
+  # @return [Object, nil] JSON-safe value or nil if not convertible
   def json_value(value)
     return nil if value.nil?
     return value if JSON_SAFE_TYPES.include?(value.class)
