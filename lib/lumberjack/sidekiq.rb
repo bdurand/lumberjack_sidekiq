@@ -12,7 +12,7 @@ require "sidekiq"
 # - {AttributePassthroughMiddleware} for passing log attributes from client to server
 #
 # @author Brian Durand
-# @version 1.0.0
+# @version 1.2.0
 module Lumberjack::Sidekiq
   VERSION = File.read(File.expand_path("../../../VERSION", __FILE__)).strip.freeze
 end
