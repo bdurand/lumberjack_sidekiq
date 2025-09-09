@@ -39,9 +39,12 @@ class Lumberjack::Sidekiq::AttributePassthroughMiddleware
     job["logging"] ||= {}
     attributes = job["logging"]["attributes"] || {}
 
-    @pass_through_attributes.each do |attribute|
-      value = json_value(Sidekiq.logger.attribute_value(attribute))
-      attributes[attribute] = value unless value.nil?
+    unless @pass_through_attributes.empty?
+      logger_attributes = logger_attributes_helper
+      @pass_through_attributes.each do |attribute|
+        value = json_value(logger_attributes[attribute])
+        attributes[attribute] = value unless value.nil?
+      end
     end
 
     job["logging"]["attributes"] = attributes unless attributes.empty?
@@ -50,6 +53,15 @@ class Lumberjack::Sidekiq::AttributePassthroughMiddleware
   end
 
   private
+
+  def logger_attributes_helper
+    attributes = Sidekiq.logger.attributes
+    formatter = Sidekiq.logger.attribute_formatter
+    if formatter
+      attributes = formatter.format(attributes)
+    end
+    Lumberjack::AttributesHelper.new(attributes)
+  end
 
   def json_value(value)
     return nil if value.nil?
