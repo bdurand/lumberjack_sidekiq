@@ -24,8 +24,8 @@ RSpec.describe Lumberjack::Sidekiq::AttributePassthroughMiddleware do
     end
 
     it "runs the attributes through the attribute formatter first" do
-      logger.attribute_formatter = Lumberjack::AttributeFormatter.build do
-        add_class(Integer) { |v| v * 2 }
+      logger.attribute_formatter = Lumberjack::AttributeFormatter.build do |formatter|
+        formatter.add_class(Integer) { |v| v * 2 }
       end
       logger.tag(user_id: 123, request_id: "abc") do
         middleware.call("MyWorker", job, "default", nil) do
