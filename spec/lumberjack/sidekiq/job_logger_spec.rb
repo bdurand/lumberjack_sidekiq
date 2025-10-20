@@ -32,44 +32,44 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
       end
     end
 
-    it "adds tags with the jid and class of the job" do
+    it "adds attributes with the jid and class of the job" do
       job_logger.prepare(job) do
-        expect(logger.tag_value("jid")).to eq("12345")
-        expect(logger.tag_value("class")).to eq("MyWorker")
+        expect(logger.attribute_value("jid")).to eq("12345")
+        expect(logger.attribute_value("class")).to eq("MyWorker")
       end
     end
 
-    it "adds tags with the bid if present" do
+    it "adds attributes with the bid if present" do
       job["bid"] = "67890"
       job_logger.prepare(job) do
-        expect(logger.tag_value("bid")).to eq("67890")
+        expect(logger.attribute_value("bid")).to eq("67890")
       end
     end
 
-    it "adds tags with the job's custom tags" do
-      job["tags"] = ["tag1", "tag2"]
+    it "adds attributes with the job's custom attributes" do
+      job["attributes"] = ["attribute1", "attribute2"]
       job_logger.prepare(job) do
-        expect(logger.tag_value("tags")).to eq(["tag1", "tag2"])
+        expect(logger.attribute_value("attributes")).to eq(["attribute1", "attribute2"])
       end
     end
 
-    it "can add a prefix to the tags" do
-      config[:log_tag_prefix] = "sidekiq."
+    it "can add a prefix to the attributes" do
+      config[:log_attribute_prefix] = "sidekiq."
       job_logger.prepare(job) do
-        expect(logger.tag_value("sidekiq.class")).to eq("MyWorker")
-        expect(logger.tag_value("sidekiq.jid")).to eq("12345")
+        expect(logger.attribute_value("sidekiq.class")).to eq("MyWorker")
+        expect(logger.attribute_value("sidekiq.jid")).to eq("12345")
       end
     end
 
-    it "can passthrough tags set from the tag passthrough middleware" do
+    it "can passthrough attributes set from the attribute passthrough middleware" do
       client_logger = Lumberjack::Logger.new(StringIO.new)
-      middleware = Lumberjack::Sidekiq::TagPassthroughMiddleware.new(:user_id, :request_id)
-      job["logging"] = {"tags" => {"user_id" => 123, "request_id" => "abc"}}
+      middleware = Lumberjack::Sidekiq::AttributePassthroughMiddleware.new(:user_id, :request_id)
+      job["logging"] = {"attributes" => {"user_id" => 123, "request_id" => "abc"}}
       allow(Sidekiq).to receive(:logger).and_return(client_logger)
       middleware.call("MyWorker", job, "default", nil) do
         job_logger.prepare(job) do
-          expect(logger.tag_value("user_id")).to eq(123)
-          expect(logger.tag_value("request_id")).to eq("abc")
+          expect(logger.attribute_value("user_id")).to eq(123)
+          expect(logger.attribute_value("request_id")).to eq("abc")
         end
       end
     end
@@ -239,8 +239,8 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
       expect(out.string).not_to include("retry_count:")
     end
 
-    it "includes current Sidekiq::Context in the log tags" do
-      config[:tag_prefix] = "sidekiq."
+    it "includes current Sidekiq::Context in the log attributes" do
+      config[:attribute_prefix] = "sidekiq."
       job_logger.call(job, "default") do
         Sidekiq::Context.current[:user_id] = 123
       end

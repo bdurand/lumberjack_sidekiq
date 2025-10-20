@@ -4,7 +4,7 @@ Gem::Specification.new do |spec|
   spec.authors = ["Brian Durand"]
   spec.email = ["bbdurand@gmail.com"]
 
-  spec.summary = "Structured logging for Sidekiq jobs using the Lumberjack framework with automatic tagging, timing, and context propagation."
+  spec.summary = "Structured logging for Sidekiq jobs using the Lumberjack framework with automatic attributeging, timing, and context propagation."
   spec.homepage = "https://github.com/bdurand/lumberjack_sidekiq"
   spec.license = "MIT"
 
@@ -28,6 +28,6 @@ Gem::Specification.new do |spec|
 
   spec.required_ruby_version = ">= 2.7"
 
-  spec.add_dependency "lumberjack", ">=1.3"
+  spec.add_dependency "lumberjack", ">=2.0"
   spec.add_dependency "sidekiq", ">=7.0"
 end
