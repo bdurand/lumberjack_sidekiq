@@ -117,7 +117,7 @@ module Lumberjack::Sidekiq
       class_name = job["wrapped"] || job["class"]
       klass = Object.const_get(class_name) if class_name && Object.const_defined?(class_name)
       return ["..."] unless klass.is_a?(Class)
-      return ["..."] unless klass.instance_methods.include?(:perform)
+      return ["..."] unless klass.method_defined?(:perform)
 
       perform_args = klass.instance_method(:perform).parameters
       args.each_with_index.map do |arg, index|

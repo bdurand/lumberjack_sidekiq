@@ -114,7 +114,9 @@ class Lumberjack::Sidekiq::JobLogger
 
     Lumberjack.context do
       @logger.tag(attributes) do
-        level = job.dig("logging", "level") || job["log_level"]
+        logging_options = job["logging"]
+        logging_options = {} unless logging_options.is_a?(Hash)
+        level = logging_options["level"] || job["log_level"]
         if level
           @logger.with_level(level, &block)
         else
@@ -145,10 +147,11 @@ class Lumberjack::Sidekiq::JobLogger
   # @param start [Float] The start time from Process.clock_gettime
   # @param enqueued_time [Integer, nil] The enqueued time in milliseconds
   def log_end_job(job, start, enqueued_time)
-    message = @message_formatter.end_job(job, elapsed_time(start))
+    duration = elapsed_time(start)
+    message = @message_formatter.end_job(job, duration)
     if @logger.is_a?(Lumberjack::Logger)
       attributes = job_attributes(job)
-      attributes["#{@prefix}duration"] = elapsed_time(start)
+      attributes["#{@prefix}duration"] = duration
       attributes["#{@prefix}enqueued_ms"] = enqueued_time if enqueued_time
       @logger.info(message, attributes)
     else
@@ -163,10 +166,11 @@ class Lumberjack::Sidekiq::JobLogger
   # @param start [Float] The start time from Process.clock_gettime
   # @param enqueued_time [Integer, nil] The enqueued time in milliseconds
   def log_failed_job(job, err, start, enqueued_time)
-    message = @message_formatter.failed_job(job, err, elapsed_time(start))
+    duration = elapsed_time(start)
+    message = @message_formatter.failed_job(job, err, duration)
     if @logger.is_a?(Lumberjack::Logger)
       attributes = job_attributes(job)
-      attributes["#{@prefix}duration"] = elapsed_time(start)
+      attributes["#{@prefix}duration"] = duration
       attributes["#{@prefix}enqueued_ms"] = enqueued_time if enqueued_time
       @logger.error(message, attributes)
     else
@@ -206,7 +210,7 @@ class Lumberjack::Sidekiq::JobLogger
     attributes = {}
 
     retry_count = job["retry_count"]
-    attributes["#{@prefix}retry_count"] = retry_count if retry_count && retry_count > 0
+    attributes["#{@prefix}retry_count"] = retry_count if retry_count
 
     attributes["#{@prefix}queue"] = job["queue"] if job["queue"]
 
@@ -230,6 +234,7 @@ class Lumberjack::Sidekiq::JobLogger
   # @param job [Hash] The job hash containing job data
   # @return [Hash, nil] The passthrough attributes or nil if none
   def passthrough_attributes(job)
-    job.dig("logging", "attributes")
+    logging_options = job["logging"]
+    logging_options["attributes"] if logging_options.is_a?(Hash)
   end
 end

@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.0.1
+
+### Fixed
+
+- `AttributePassthroughMiddleware` no longer mutates the job's `logging` options hash in place. Because Sidekiq merges the class-level `sidekiq_options` hash into job payloads by reference, mutating it leaked passthrough attributes from one job into all subsequent jobs of the same worker class and raced across threads pushing jobs concurrently.
+- `AttributePassthroughMiddleware` no longer adds an empty `logging` hash to job payloads when there are no attributes to pass through.
+- `JobLogger` no longer raises an error when a job's `logging` option is not a hash (e.g. `sidekiq_options logging: false`).
+- The duration reported in end and failure log messages now matches the value in the `duration` attribute.
+- The `retry_count` attribute is now logged when it is zero, which indicates the first retry of a job.
+
 ## 2.0.0
 
 ### Added

@@ -87,6 +87,15 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         expect(logger.level).to eq(Lumberjack::Logger::ERROR)
       end
     end
+
+    it "does not error if the logging option is not a hash" do
+      job["logging"] = false
+      value = nil
+      job_logger.prepare(job) do
+        value = "foobar"
+      end
+      expect(value).to eq("foobar")
+    end
   end
 
   describe "#call" do
@@ -231,12 +240,21 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
       expect(out.string).to include("retry_count:2")
     end
 
-    it "does not include the retry count if it is zero" do
+    it "includes the retry count if it is zero since that indicates the first retry" do
       job["retry_count"] = 0
       job_logger.call(job, "default") do
         # Simulate job processing
       end
-      expect(out.string).not_to include("retry_count:")
+      expect(out.string).to include("retry_count:0")
+    end
+
+    it "logs the same duration in the message and the duration attribute" do
+      job_logger.call(job, "default") do
+        sleep(0.01)
+      end
+      message_ms = out.string.match(/Finished Sidekiq job .* in ([\d.]+)ms/)[1].to_f
+      duration = out.string.match(/duration:([\d.]+)/)[1].to_f
+      expect((duration * 1000).round(1)).to eq(message_ms)
     end
 
     it "includes current Sidekiq::Context in the log attributes" do
