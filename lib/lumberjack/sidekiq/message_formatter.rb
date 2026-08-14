@@ -15,8 +15,27 @@ module Lumberjack::Sidekiq
   # Argument logging can be disabled globally by setting the `skip_logging_job_arguments` option in your
   # Sidekiq configuration.
   #
-  # You can override this class or provide your own implementation that implements the `start_job`,
-  # `end_job`, and `failed_job` methods and set it in your Sidekiq configuration:
+  # You can override the messages themselves by setting the `job_logger_messages` option in your
+  # Sidekiq configuration with lambdas for the `start`, `end`, and `failed` messages:
+  #
+  #   Sidekiq.configure_server do |config|
+  #     config[:job_logger_messages] = {
+  #       start: ->(job) { "Running #{job_info(job)}" },
+  #       end: ->(job, elapsed_time) { "Completed #{job_info(job)} in #{(elapsed_time * 1000).round(1)}ms" },
+  #       failed: ->(job, error, elapsed_time) { "#{worker_class(job)} raised #{error.class.name}: #{error.message}" }
+  #     }
+  #   end
+  #
+  # The lambdas are passed the same arguments as the method they override and are evaluated in the
+  # context of the message formatter, so helper methods like `job_info`, `worker_class`, and
+  # `job_display_args` are available to them. Any messages you don't specify will use the default
+  # format. Lambdas that don't need the trailing arguments can declare fewer parameters:
+  #
+  #   config[:job_logger_messages] = {end: ->(job) { "Completed #{job_info(job)}" }}
+  #
+  # For full control over message formatting, you can override this class or provide your own
+  # implementation that implements the `start_job`, `end_job`, and `failed_job` methods and set
+  # it in your Sidekiq configuration:
   #
   #   Sidekiq.configure_server do |config|
   #     config[:job_logger_message_formatter] = MyCustomFormatter.new(config)
@@ -25,6 +44,9 @@ module Lumberjack::Sidekiq
     # @param config [::Sidekiq::Config] The Sidekiq configuration.
     def initialize(config)
       @config = config
+      @start_message = message_lambda(:start)
+      @end_message = message_lambda(:end)
+      @failed_message = message_lambda(:failed)
     end
 
     # Formats the start job message.
@@ -32,6 +54,8 @@ module Lumberjack::Sidekiq
     # @param job [Hash] The job data.
     # @return [String] The formatted start job message.
     def start_job(job)
+      return call_message(@start_message, [job]) if @start_message
+
       "Start Sidekiq job #{job_info(job)}"
     end
 
@@ -41,6 +65,8 @@ module Lumberjack::Sidekiq
     # @param elapsed_time [Float] The elapsed time in seconds.
     # @return [String] The formatted end job message.
     def end_job(job, elapsed_time)
+      return call_message(@end_message, [job, elapsed_time]) if @end_message
+
       "Finished Sidekiq job #{job_info(job)} in #{(elapsed_time * 1000).round(1)}ms"
     end
 
@@ -51,6 +77,8 @@ module Lumberjack::Sidekiq
     # @param elapsed_time [Float] The elapsed time in seconds.
     # @return [String] The formatted failed job message.
     def failed_job(job, error, elapsed_time)
+      return call_message(@failed_message, [job, error, elapsed_time]) if @failed_message
+
       "Failed Sidekiq job #{job_info(job)} due to #{error.class.name} in #{(elapsed_time * 1000).round(1)}ms"
     end
 
@@ -106,6 +134,38 @@ module Lumberjack::Sidekiq
     end
 
     private
+
+    # Looks up a message lambda from the `job_logger_messages` configuration option.
+    #
+    # @param name [Symbol] The message name (:start, :end, or :failed).
+    # @return [#call, nil] The lambda or nil if it was not configured.
+    # @raise [ArgumentError] If the configured value cannot be called.
+    def message_lambda(name)
+      messages = @config[:job_logger_messages]
+      return nil unless messages.is_a?(Hash)
+
+      callable = messages[name] || messages[name.to_s]
+      return nil if callable.nil?
+      unless callable.respond_to?(:call)
+        raise ArgumentError, "Sidekiq job_logger_messages[#{name.inspect}] must respond to `call`"
+      end
+
+      callable
+    end
+
+    # Calls a message lambda in the context of this formatter so that it can use the helper methods.
+    # Lambdas that declare fewer parameters than are available are only passed the ones they accept.
+    #
+    # @param callable [#call] The configured message lambda.
+    # @param args [Array] The arguments available to the lambda.
+    # @return [String] The formatted message.
+    def call_message(callable, args)
+      return callable.call(*args) unless callable.is_a?(Proc)
+
+      arity = callable.arity
+      args = args.first(arity) if arity >= 0
+      instance_exec(*args, &callable)
+    end
 
     # Filters job arguments based on the args filter configuration.
     #

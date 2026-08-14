@@ -30,6 +30,79 @@ RSpec.describe Lumberjack::Sidekiq::MessageFormatter do
     end
   end
 
+  describe "message overrides" do
+    let(:job) { {"class" => "MyWorker", "args" => ["foo", 12], "queue" => "default", "jid" => "abc123"} }
+
+    it "overrides the start job message with a lambda" do
+      config[:job_logger_messages] = {start: ->(job) { "Running #{job["class"]} on #{job["queue"]}" }}
+      expect(formatter.start_job(job)).to eq("Running MyWorker on default")
+    end
+
+    it "overrides the end job message with a lambda" do
+      config[:job_logger_messages] = {
+        end: ->(job, elapsed_time) { "Completed #{job["jid"]} in #{(elapsed_time * 1000).round(1)}ms" }
+      }
+      expect(formatter.end_job(job, 0.12345)).to eq("Completed abc123 in 123.5ms")
+    end
+
+    it "overrides the failed job message with a lambda" do
+      config[:job_logger_messages] = {
+        failed: ->(job, error, elapsed_time) { "#{job["jid"]} raised #{error.class.name}: #{error.message} after #{elapsed_time}s" }
+      }
+      error = RuntimeError.new("Something went wrong")
+      expect(formatter.failed_job(job, error, 0.12345)).to eq("abc123 raised RuntimeError: Something went wrong after 0.12345s")
+    end
+
+    it "evaluates the lambda in the context of the formatter so helper methods are available" do
+      config[:job_logger_messages] = {start: ->(job) { "Running #{job_info(job)} (#{worker_class(job)})" }}
+      expect(formatter.start_job(job)).to eq("Running MyWorker.perform(\"foo\", 12) (MyWorker)")
+    end
+
+    it "only passes the arguments a lambda declares" do
+      config[:job_logger_messages] = {
+        end: ->(job) { "Completed #{job_info(job)}" },
+        failed: ->(job, error) { "Failed #{job_info(job)} with #{error.class.name}" }
+      }
+      expect(formatter.end_job(job, 0.12345)).to eq("Completed MyWorker.perform(\"foo\", 12)")
+      expect(formatter.failed_job(job, RuntimeError.new("boom"), 0.12345)).to eq("Failed MyWorker.perform(\"foo\", 12) with RuntimeError")
+    end
+
+    it "supports procs as well as lambdas" do
+      config[:job_logger_messages] = {start: proc { |job| "Running #{job_info(job)}" }}
+      expect(formatter.start_job(job)).to eq("Running MyWorker.perform(\"foo\", 12)")
+    end
+
+    it "supports any object that responds to call" do
+      callable = Class.new do
+        def call(job)
+          "Running #{job["class"]}"
+        end
+      end.new
+      config[:job_logger_messages] = {start: callable}
+      expect(formatter.start_job(job)).to eq("Running MyWorker")
+    end
+
+    it "supports string keys for the message names" do
+      config[:job_logger_messages] = {"start" => ->(job) { "Running #{job_info(job)}" }}
+      expect(formatter.start_job(job)).to eq("Running MyWorker.perform(\"foo\", 12)")
+    end
+
+    it "uses the default messages for names that are not overridden" do
+      config[:job_logger_messages] = {start: ->(job) { "Running #{job_info(job)}" }}
+      expect(formatter.end_job(job, 0.12345)).to eq("Finished Sidekiq job MyWorker.perform(\"foo\", 12) in 123.5ms")
+    end
+
+    it "uses the default messages when the option is not a hash" do
+      config[:job_logger_messages] = "invalid"
+      expect(formatter.start_job(job)).to eq("Start Sidekiq job MyWorker.perform(\"foo\", 12)")
+    end
+
+    it "raises an error if a configured message does not respond to call" do
+      config[:job_logger_messages] = {start: "Running {job}"}
+      expect { formatter }.to raise_error(ArgumentError, /job_logger_messages\[:start\] must respond to `call`/)
+    end
+  end
+
   describe "#job_info" do
     it "returns the formatted job information with arguments" do
       job = {"class" => "MyWorker", "args" => ["foo", 12]}
