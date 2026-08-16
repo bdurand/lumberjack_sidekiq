@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Log messages for job start, end, and failure can now be overridden with lambdas set in the `:job_logger_messages` configuration option (e.g. `config[:job_logger_messages] = {start: ->(job) { "Running #{job_info(job)}" }}`). The lambdas are evaluated in the context of the message formatter so they can use its helper methods.
+- Job arguments can now be hidden from log messages with a deny-list set in the worker's `logging` options (e.g. `sidekiq_options logging: {hide_args: [:password]}`). Entries can be `perform` parameter names or zero based argument positions. The `args` allow-list takes precedence when both options are set.
+- Job arguments can now be added as log attributes on every log entry made during a job by mapping `perform` parameter names to attribute names. The mapping can be set globally with the `:arg_attributes` configuration option or per worker with the `logging.arg_attributes` option; worker options take precedence. The mapped attribute names are not prefixed with `log_attribute_prefix`.
+
+### Changed
+
+- Failed jobs are now logged with the original error when Sidekiq's retry handler wraps it in a `Sidekiq::JobRetry::Handled` error.
+- Jobs that raise `Sidekiq::JobRetry::Skip` are now logged as finished rather than failed since that error indicates the job's error was already handled by the worker.
 
 ### Fixed
 

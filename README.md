@@ -117,12 +117,22 @@ class MyWorker
     skip: false,             # Skip logging lifecycle events for this job
     skip_start: true,        # Skip the "Start job" lifecycle log message
     args: ["param1"],        # Only log specific arguments by name; can specify false to omit all args
+    hide_args: [:param2],    # Hide specific arguments by name or position; args takes precedence when both are set
+    arg_attributes: {param1: "param.one"},  # Map perform arguments to log attributes on every entry in the job
     attributes: {custom: "value"}  # Add custom attributes to job logs
   }
 
   def perform(param1, param2)
     # Your job logic here
   end
+end
+```
+
+The `arg_attributes` mapping can also be set globally for all workers with the `:arg_attributes` configuration option. Worker options take precedence over the global mapping. The mapped attribute names are used as given and are not prefixed with `:log_attribute_prefix`.
+
+```ruby
+Sidekiq.configure_server do |config|
+  config[:arg_attributes] = {user_id: "user.id"}
 end
 ```
 

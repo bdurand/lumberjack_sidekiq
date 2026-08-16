@@ -146,6 +146,33 @@ RSpec.describe Lumberjack::Sidekiq::MessageFormatter do
       job = {"class" => "MyWorker", "args" => ["foo", 12], "logging" => {"args" => ["arg1"]}}
       expect(formatter.job_display_args(job)).to eq(['"foo"', "-"])
     end
+
+    it "does not error if the logging option is not a hash" do
+      job = {"class" => "MyWorker", "args" => ["foo", 12], "logging" => false}
+      expect(formatter.job_display_args(job)).to eq(['"foo"', "12"])
+    end
+
+    describe "hide_args deny-list" do
+      it "hides args named in the logging.hide_args option" do
+        job = {"class" => "MyWorker", "args" => ["foo", 12], "logging" => {"hide_args" => ["arg1"]}}
+        expect(formatter.job_display_args(job)).to eq(["-", "12"])
+      end
+
+      it "hides args by zero based position" do
+        job = {"class" => "MyWorker", "args" => ["foo", 12, 13], "logging" => {"hide_args" => [1]}}
+        expect(formatter.job_display_args(job)).to eq(['"foo"', "-", "13"])
+      end
+
+      it "hides all arguments if the worker class cannot be resolved" do
+        job = {"class" => "NoSuchWorkerClass", "args" => ["foo", 12], "logging" => {"hide_args" => ["arg1"]}}
+        expect(formatter.job_display_args(job)).to eq(["..."])
+      end
+
+      it "gives precedence to the args allow-list when both options are set" do
+        job = {"class" => "MyWorker", "args" => ["foo", 12], "logging" => {"args" => ["arg1"], "hide_args" => ["arg1"]}}
+        expect(formatter.job_display_args(job)).to eq(['"foo"', "-"])
+      end
+    end
   end
 
   describe "#skip_logging_job_arguments?" do

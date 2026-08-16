@@ -96,6 +96,58 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
       end
       expect(value).to eq("foobar")
     end
+
+    describe "arg attributes" do
+      it "maps job arguments to attributes with the logging.arg_attributes option" do
+        job["logging"] = {"arg_attributes" => {"arg1" => "first.arg", "arg3" => "third.arg"}}
+        job_logger.prepare(job) do
+          expect(logger.attribute_value("first.arg")).to eq(1)
+          expect(logger.attribute_value("third.arg")).to eq(3)
+        end
+      end
+
+      it "maps job arguments to attributes with the global arg_attributes config option" do
+        config[:arg_attributes] = {arg2: "second.arg"}
+        job_logger.prepare(job) do
+          expect(logger.attribute_value("second.arg")).to eq(2)
+        end
+      end
+
+      it "merges worker options over the global mapping" do
+        config[:arg_attributes] = {arg1: "global.arg"}
+        job["logging"] = {"arg_attributes" => {"arg1" => "worker.arg"}}
+        job_logger.prepare(job) do
+          expect(logger.attribute_value("worker.arg")).to eq(1)
+          expect(logger.attribute_value("global.arg")).to be_nil
+        end
+      end
+
+      it "does not prefix the mapped attribute names" do
+        config[:log_attribute_prefix] = "sidekiq."
+        job["logging"] = {"arg_attributes" => {"arg1" => "first.arg"}}
+        job_logger.prepare(job) do
+          expect(logger.attribute_value("first.arg")).to eq(1)
+          expect(logger.attribute_value("sidekiq.first.arg")).to be_nil
+        end
+      end
+
+      it "ignores arguments that are not perform parameters" do
+        job["logging"] = {"arg_attributes" => {"missing" => "missing.arg"}}
+        job_logger.prepare(job) do
+          expect(logger.attribute_value("missing.arg")).to be_nil
+        end
+      end
+
+      it "ignores the mapping if the worker class cannot be resolved" do
+        job["class"] = "NoSuchWorkerClass"
+        job["logging"] = {"arg_attributes" => {"arg1" => "first.arg"}}
+        value = nil
+        job_logger.prepare(job) do
+          value = logger.attribute_value("first.arg")
+        end
+        expect(value).to be_nil
+      end
+    end
   end
 
   describe "#call" do
@@ -230,6 +282,49 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         end
       end.to raise_error("Job failed")
       expect(out.string).not_to include("Failed Sidekiq job")
+    end
+
+    describe "retry error handling" do
+      it "logs the original error when the retry handler wraps it" do
+        expect do
+          job_logger.call(job, "default") do
+            raise ArgumentError, "Job failed"
+          rescue => e
+            raise Sidekiq::JobRetry::Handled, e.message
+          end
+        end.to raise_error(Sidekiq::JobRetry::Handled)
+        expect(out.string).to include("Failed Sidekiq job MyWorker.perform(1, 2, 3) due to ArgumentError")
+        expect(out.string).not_to include("Sidekiq::JobRetry::Handled")
+      end
+
+      it "logs the wrapping error when it has no cause" do
+        expect do
+          job_logger.call(job, "default") do
+            raise Sidekiq::JobRetry::Handled, "Job failed"
+          end
+        end.to raise_error(Sidekiq::JobRetry::Handled)
+        expect(out.string).to include("due to Sidekiq::JobRetry::Handled")
+      end
+
+      it "logs the job as finished when the job raises Sidekiq::JobRetry::Skip" do
+        expect do
+          job_logger.call(job, "default") do
+            raise Sidekiq::JobRetry::Skip, "already handled"
+          end
+        end.to raise_error(Sidekiq::JobRetry::Skip)
+        expect(out.string).to include("Finished Sidekiq job MyWorker.perform(1, 2, 3)")
+        expect(out.string).not_to include("Failed Sidekiq job")
+      end
+
+      it "does not log a finish for Skip if the logging.skip job option is true" do
+        job["logging"] = {"skip" => true}
+        expect do
+          job_logger.call(job, "default") do
+            raise Sidekiq::JobRetry::Skip, "already handled"
+          end
+        end.to raise_error(Sidekiq::JobRetry::Skip)
+        expect(out.string).not_to include("Finished Sidekiq job")
+      end
     end
 
     it "includes the retry count in the log entries if the job is being retried" do

@@ -11,6 +11,10 @@ module Lumberjack::Sidekiq
   #
   #   sidekiq_options logging: {args: [:arg1]} # only `arg1` will appear in the logs
   #   sidekiq_options logging: {args: false} # no arguments will appear in the logs
+  #   sidekiq_options logging: {hide_args: [:arg2]} # all arguments except `arg2` will appear in the logs
+  #
+  # The `hide_args` option is a deny-list; entries can be `perform` parameter names or zero
+  # based argument positions. The `args` option takes precedence when both are set.
   #
   # Argument logging can be disabled globally by setting the `skip_logging_job_arguments` option in your
   # Sidekiq configuration.
@@ -103,17 +107,21 @@ module Lumberjack::Sidekiq
     # @param job [Hash] The job data.
     # @return [Array<String>] The formatted job arguments.
     def job_display_args(job)
-      logger_options = job["logging"] || {}
+      logger_options = job["logging"]
+      logger_options = {} unless logger_options.is_a?(Hash)
       args_filter = logger_options["args"]
+      hide_filter = logger_options["hide_args"] if args_filter.nil?
       args = job["args"]
       return [] if args.nil?
-      return args.collect(&:inspect) if args_filter == true || args_filter.nil?
 
       if args_filter == false
         ["..."]
+      elsif !args_filter.nil? && args_filter != true
+        filtered_args(job, args, Array(args_filter))
+      elsif hide_filter
+        hidden_args(job, args, Array(hide_filter))
       else
-        args_filter = Array(args_filter)
-        filtered_args(job, args, args_filter)
+        args.collect(&:inspect)
       end
     end
 
@@ -174,12 +182,10 @@ module Lumberjack::Sidekiq
     # @param args_filter [Array] The list of argument names to include
     # @return [Array<String>] The filtered arguments for display
     def filtered_args(job, args, args_filter)
-      class_name = job["wrapped"] || job["class"]
-      klass = Object.const_get(class_name) if class_name && Object.const_defined?(class_name)
-      return ["..."] unless klass.is_a?(Class)
-      return ["..."] unless klass.method_defined?(:perform)
+      perform_args = Lumberjack::Sidekiq.perform_parameters(job)
+      return ["..."] if perform_args.nil?
 
-      perform_args = klass.instance_method(:perform).parameters
+      args_filter = args_filter.map(&:to_s)
       args.each_with_index.map do |arg, index|
         arg_name = perform_args[index][1] if perform_args[index]
         if args_filter.include?(arg_name.to_s)
@@ -187,6 +193,31 @@ module Lumberjack::Sidekiq
         else
           "-"
         end
+      end
+    end
+
+    # Hides job arguments named in the deny-list filter. The filter can contain
+    # perform method parameter names or zero based argument positions.
+    #
+    # @param job [Hash] The job data
+    # @param args [Array] The job arguments
+    # @param hide_filter [Array] The list of argument names or positions to hide
+    # @return [Array<String>] The filtered arguments for display
+    def hidden_args(job, args, hide_filter)
+      positions = hide_filter.select { |key| key.is_a?(Integer) }
+      names = (hide_filter - positions).map(&:to_s)
+
+      unless names.empty?
+        perform_args = Lumberjack::Sidekiq.perform_parameters(job)
+        return ["..."] if perform_args.nil?
+
+        perform_args.each_with_index do |param, index|
+          positions << index if names.include?(param[1].to_s)
+        end
+      end
+
+      args.each_with_index.map do |arg, index|
+        positions.include?(index) ? "-" : arg.inspect
       end
     end
   end

@@ -2,6 +2,7 @@
 
 require "stringio"
 require "sidekiq/job_logger"
+require "sidekiq/job_retry"
 
 require_relative "../lib/lumberjack_sidekiq"
 
