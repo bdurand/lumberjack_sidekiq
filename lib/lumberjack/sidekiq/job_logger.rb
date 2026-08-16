@@ -35,8 +35,7 @@
 # `log_attribute_prefix` option.
 #
 # Jobs that fail are logged with the original error even when Sidekiq's retry handler
-# wraps it. Jobs that raise `Sidekiq::JobRetry::Skip` are logged as finished because
-# the error was already handled by the worker.
+# wraps it.
 #
 # @example Setting up the job logger
 #   Sidekiq.configure_server do |config|
@@ -52,6 +51,10 @@ class Lumberjack::Sidekiq::JobLogger
     @logger = @config.logger
     @prefix = @config[:log_attribute_prefix] || ""
     @message_formatter = @config[:job_logger_message_formatter] || Lumberjack::Sidekiq::MessageFormatter.new(@config)
+
+    @global_arg_attributes = {}
+    global_mapping = @config[:arg_attributes]
+    global_mapping.each { |key, value| @global_arg_attributes[key.to_s] = value } if global_mapping.is_a?(Hash)
   end
 
   # Sidekiq server middleware hook that logs job lifecycle events (start, completion, failure)
@@ -71,15 +74,7 @@ class Lumberjack::Sidekiq::JobLogger
 
       log_end_job(job, start, enqueued_time) unless skip_logging?(job)
     rescue Exception => err # rubocop:disable Lint/RescueException
-      unless skip_logging?(job)
-        if skipped_retry?(err)
-          # Sidekiq raises Skip to indicate the error was already handled and the
-          # job should not be retried, so the job is logged as finished.
-          log_end_job(job, start, enqueued_time)
-        else
-          log_failed_job(job, unwrap_error(err), start, enqueued_time)
-        end
-      end
+      log_failed_job(job, unwrap_error(err), start, enqueued_time) unless skip_logging?(job)
 
       raise
     end
@@ -93,10 +88,7 @@ class Lumberjack::Sidekiq::JobLogger
     return true if @config[:skip_start_job_logging]
     return true if skip_logging?(job)
 
-    logging_options = job["logging"]
-    return false unless logging_options.is_a?(Hash)
-
-    !!logging_options["skip_start"]
+    !!Lumberjack::Sidekiq.logging_options(job)["skip_start"]
   end
 
   # Determines if logging should be skipped entirely for the given job.
@@ -104,10 +96,7 @@ class Lumberjack::Sidekiq::JobLogger
   # @param job [Hash] The job hash containing job data
   # @return [Boolean] true if logging should be skipped
   def skip_logging?(job)
-    logging_options = job["logging"]
-    return false unless logging_options.is_a?(Hash)
-
-    !!logging_options["skip"]
+    !!Lumberjack::Sidekiq.logging_options(job)["skip"]
   end
 
   # Determines if enqueued time logging should be skipped globally.
@@ -142,9 +131,7 @@ class Lumberjack::Sidekiq::JobLogger
 
     Lumberjack.context do
       @logger.tag(attributes) do
-        logging_options = job["logging"]
-        logging_options = {} unless logging_options.is_a?(Hash)
-        level = logging_options["level"] || job["log_level"]
+        level = Lumberjack::Sidekiq.logging_options(job)["level"] || job["log_level"]
         if level
           @logger.with_level(level, &block)
         else
@@ -262,17 +249,7 @@ class Lumberjack::Sidekiq::JobLogger
   # @param job [Hash] The job hash containing job data
   # @return [Hash, nil] The passthrough attributes or nil if none
   def passthrough_attributes(job)
-    logging_options = job["logging"]
-    logging_options["attributes"] if logging_options.is_a?(Hash)
-  end
-
-  # Determines if the error indicates Sidekiq skipped retrying a job whose error
-  # was already handled.
-  #
-  # @param err [Exception] The rescued exception
-  # @return [Boolean] true if the error is a Sidekiq::JobRetry::Skip
-  def skipped_retry?(err)
-    defined?(::Sidekiq::JobRetry::Skip) && err.is_a?(::Sidekiq::JobRetry::Skip)
+    Lumberjack::Sidekiq.logging_options(job)["attributes"]
   end
 
   # Sidekiq's retry handler wraps job errors before re-raising them out of the
@@ -311,7 +288,14 @@ class Lumberjack::Sidekiq::JobLogger
       next if attribute_name.nil? || attribute_name.to_s.empty?
 
       index = perform_args.find_index { |param| param[1].to_s == arg_name }
-      attributes[attribute_name.to_s] = args[index] if index && index < args.size
+      next unless index && index < args.size
+
+      # Only positional parameters map to the job argument list. A splat parameter
+      # maps to all of the remaining arguments.
+      kind = perform_args[index][0]
+      next unless [:req, :opt, :rest].include?(kind)
+
+      attributes[attribute_name.to_s] = (kind == :rest) ? args[index..] : args[index]
     end
     attributes
   end
@@ -322,15 +306,11 @@ class Lumberjack::Sidekiq::JobLogger
   # @param job [Hash] The job hash containing job data
   # @return [Hash] The mapping of perform parameter names to attribute names
   def arg_attributes_mapping(job)
-    mapping = {}
+    job_mapping = Lumberjack::Sidekiq.logging_options(job)["arg_attributes"]
+    return @global_arg_attributes unless job_mapping.is_a?(Hash)
 
-    global_mapping = @config[:arg_attributes]
-    global_mapping.each { |key, value| mapping[key.to_s] = value } if global_mapping.is_a?(Hash)
-
-    logging_options = job["logging"]
-    job_mapping = logging_options["arg_attributes"] if logging_options.is_a?(Hash)
-    job_mapping.each { |key, value| mapping[key.to_s] = value } if job_mapping.is_a?(Hash)
-
+    mapping = @global_arg_attributes.dup
+    job_mapping.each { |key, value| mapping[key.to_s] = value }
     mapping
   end
 end

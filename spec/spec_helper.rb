@@ -23,3 +23,10 @@ class MyWorker
   def perform(arg1, arg2, arg3)
   end
 end
+
+class MySplatWorker
+  include Sidekiq::Worker
+
+  def perform(arg1, *rest)
+  end
+end

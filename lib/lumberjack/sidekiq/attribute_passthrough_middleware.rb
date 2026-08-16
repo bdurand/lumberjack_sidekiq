@@ -48,7 +48,7 @@ class Lumberjack::Sidekiq::AttributePassthroughMiddleware
     unless new_attributes.empty?
       # The logging hash may be the shared class-level sidekiq_options hash, so it
       # must be copied rather than mutated to avoid leaking attributes across jobs.
-      logging = job["logging"].is_a?(Hash) ? job["logging"].dup : {}
+      logging = Lumberjack::Sidekiq.logging_options(job).dup
       existing = logging["attributes"]
       logging["attributes"] = existing.is_a?(Hash) ? existing.merge(new_attributes) : new_attributes
       job["logging"] = logging

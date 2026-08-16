@@ -82,6 +82,16 @@ RSpec.describe Lumberjack::Sidekiq::MessageFormatter do
       expect(formatter.start_job(job)).to eq("Running MyWorker")
     end
 
+    it "only passes the arguments a callable object declares" do
+      callable = Class.new do
+        def call(job)
+          "Completed #{job["class"]}"
+        end
+      end.new
+      config[:job_logger_messages] = {end: callable}
+      expect(formatter.end_job(job, 0.12345)).to eq("Completed MyWorker")
+    end
+
     it "supports string keys for the message names" do
       config[:job_logger_messages] = {"start" => ->(job) { "Running #{job_info(job)}" }}
       expect(formatter.start_job(job)).to eq("Running MyWorker.perform(\"foo\", 12)")
@@ -171,6 +181,21 @@ RSpec.describe Lumberjack::Sidekiq::MessageFormatter do
       it "gives precedence to the args allow-list when both options are set" do
         job = {"class" => "MyWorker", "args" => ["foo", 12], "logging" => {"args" => ["arg1"], "hide_args" => ["arg1"]}}
         expect(formatter.job_display_args(job)).to eq(['"foo"', "-"])
+      end
+
+      it "applies the deny-list when the args option is true" do
+        job = {"class" => "MyWorker", "args" => ["foo", 12], "logging" => {"args" => true, "hide_args" => ["arg1"]}}
+        expect(formatter.job_display_args(job)).to eq(["-", "12"])
+      end
+
+      it "hides all values of a splat parameter" do
+        job = {"class" => "MySplatWorker", "args" => ["foo", 12, 13], "logging" => {"hide_args" => ["rest"]}}
+        expect(formatter.job_display_args(job)).to eq(['"foo"', "-", "-"])
+      end
+
+      it "hides all arguments for wrapped jobs since the arg names cannot be resolved" do
+        job = {"class" => "ActiveJobWrapper", "wrapped" => "MyWorker", "args" => [{"arguments" => ["foo", 12]}], "logging" => {"hide_args" => ["arg1"]}}
+        expect(formatter.job_display_args(job)).to eq(["..."])
       end
     end
   end

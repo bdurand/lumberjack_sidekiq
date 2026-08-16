@@ -117,7 +117,7 @@ class MyWorker
     skip: false,             # Skip logging lifecycle events for this job
     skip_start: true,        # Skip the "Start job" lifecycle log message
     args: ["param1"],        # Only log specific arguments by name; can specify false to omit all args
-    hide_args: [:param2],    # Hide specific arguments by name or position; args takes precedence when both are set
+    hide_args: [:param2],    # Hide specific arguments by name or position; the args allow-list takes precedence when both are set
     arg_attributes: {param1: "param.one"},  # Map perform arguments to log attributes on every entry in the job
     attributes: {custom: "value"}  # Add custom attributes to job logs
   }

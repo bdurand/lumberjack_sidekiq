@@ -14,7 +14,7 @@ module Lumberjack::Sidekiq
   #   sidekiq_options logging: {hide_args: [:arg2]} # all arguments except `arg2` will appear in the logs
   #
   # The `hide_args` option is a deny-list; entries can be `perform` parameter names or zero
-  # based argument positions. The `args` option takes precedence when both are set.
+  # based argument positions. The `args` allow-list takes precedence when both are set.
   #
   # Argument logging can be disabled globally by setting the `skip_logging_job_arguments` option in your
   # Sidekiq configuration.
@@ -107,10 +107,9 @@ module Lumberjack::Sidekiq
     # @param job [Hash] The job data.
     # @return [Array<String>] The formatted job arguments.
     def job_display_args(job)
-      logger_options = job["logging"]
-      logger_options = {} unless logger_options.is_a?(Hash)
+      logger_options = Lumberjack::Sidekiq.logging_options(job)
       args_filter = logger_options["args"]
-      hide_filter = logger_options["hide_args"] if args_filter.nil?
+      hide_filter = logger_options["hide_args"] if args_filter.nil? || args_filter == true
       args = job["args"]
       return [] if args.nil?
 
@@ -162,17 +161,21 @@ module Lumberjack::Sidekiq
     end
 
     # Calls a message lambda in the context of this formatter so that it can use the helper methods.
-    # Lambdas that declare fewer parameters than are available are only passed the ones they accept.
+    # Callables that declare fewer parameters than are available are only passed the ones they accept.
     #
     # @param callable [#call] The configured message lambda.
     # @param args [Array] The arguments available to the lambda.
     # @return [String] The formatted message.
     def call_message(callable, args)
-      return callable.call(*args) unless callable.is_a?(Proc)
-
-      arity = callable.arity
-      args = args.first(arity) if arity >= 0
-      instance_exec(*args, &callable)
+      if callable.is_a?(Proc)
+        arity = callable.arity
+        args = args.first(arity) if arity >= 0
+        instance_exec(*args, &callable)
+      else
+        arity = callable.method(:call).arity
+        args = args.first(arity) if arity >= 0
+        callable.call(*args)
+      end
     end
 
     # Filters job arguments based on the args filter configuration.
@@ -204,15 +207,22 @@ module Lumberjack::Sidekiq
     # @param hide_filter [Array] The list of argument names or positions to hide
     # @return [Array<String>] The filtered arguments for display
     def hidden_args(job, args, hide_filter)
-      positions = hide_filter.select { |key| key.is_a?(Integer) }
-      names = (hide_filter - positions).map(&:to_s)
+      positions, names = hide_filter.partition { |key| key.is_a?(Integer) }
+      names = names.map(&:to_s)
 
       unless names.empty?
         perform_args = Lumberjack::Sidekiq.perform_parameters(job)
         return ["..."] if perform_args.nil?
 
-        perform_args.each_with_index do |param, index|
-          positions << index if names.include?(param[1].to_s)
+        perform_args.each_with_index do |(kind, name), index|
+          next unless names.include?(name.to_s)
+
+          # A splat parameter covers all of the remaining arguments.
+          if kind == :rest
+            positions.concat((index...args.size).to_a)
+          else
+            positions << index
+          end
         end
       end
 

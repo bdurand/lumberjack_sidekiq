@@ -147,6 +147,25 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         end
         expect(value).to be_nil
       end
+
+      it "ignores the mapping for wrapped jobs since the arg names cannot be resolved" do
+        job["class"] = "ActiveJobWrapper"
+        job["wrapped"] = "MyWorker"
+        job["logging"] = {"arg_attributes" => {"arg1" => "first.arg"}}
+        value = nil
+        job_logger.prepare(job) do
+          value = logger.attribute_value("first.arg")
+        end
+        expect(value).to be_nil
+      end
+
+      it "maps a splat parameter to all of the remaining arguments" do
+        job["class"] = "MySplatWorker"
+        job["logging"] = {"arg_attributes" => {"rest" => "rest.args"}}
+        job_logger.prepare(job) do
+          expect(logger.attribute_value("rest.args")).to eq([2, 3])
+        end
+      end
     end
   end
 
@@ -306,24 +325,34 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         expect(out.string).to include("due to Sidekiq::JobRetry::Handled")
       end
 
-      it "logs the job as finished when the job raises Sidekiq::JobRetry::Skip" do
+      it "logs the job as failed when the job raises Sidekiq::JobRetry::Skip" do
         expect do
           job_logger.call(job, "default") do
-            raise Sidekiq::JobRetry::Skip, "already handled"
+            raise Sidekiq::JobRetry::Skip, "interrupted"
           end
         end.to raise_error(Sidekiq::JobRetry::Skip)
-        expect(out.string).to include("Finished Sidekiq job MyWorker.perform(1, 2, 3)")
-        expect(out.string).not_to include("Failed Sidekiq job")
+        expect(out.string).to include("Failed Sidekiq job MyWorker.perform(1, 2, 3) due to Sidekiq::JobRetry::Skip")
       end
 
-      it "does not log a finish for Skip if the logging.skip job option is true" do
+      it "logs the original error when Skip wraps it" do
+        expect do
+          job_logger.call(job, "default") do
+            raise ArgumentError, "Job failed"
+          rescue
+            raise Sidekiq::JobRetry::Skip, "interrupted"
+          end
+        end.to raise_error(Sidekiq::JobRetry::Skip)
+        expect(out.string).to include("Failed Sidekiq job MyWorker.perform(1, 2, 3) due to ArgumentError")
+      end
+
+      it "does not log a failure for Skip if the logging.skip job option is true" do
         job["logging"] = {"skip" => true}
         expect do
           job_logger.call(job, "default") do
-            raise Sidekiq::JobRetry::Skip, "already handled"
+            raise Sidekiq::JobRetry::Skip, "interrupted"
           end
         end.to raise_error(Sidekiq::JobRetry::Skip)
-        expect(out.string).not_to include("Finished Sidekiq job")
+        expect(out.string).not_to include("Failed Sidekiq job")
       end
     end
 
@@ -411,14 +440,14 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         expect(out.string).to include("MyDisplayWorker.perform(1, 2, -)")
       end
 
-      it "gets the arg names from the wrapped job class" do
+      it "redacts all arguments for wrapped jobs since the arg names cannot be resolved" do
         job["class"] = "ActiveJobWrapper"
         job["wrapped"] = "MyWorker"
         job["logging"] = {"args" => ["arg1", "arg2"]}
         job_logger.call(job, "default") do
           # Simulate job processing
         end
-        expect(out.string).to include("MyWorker.perform(1, 2, -)")
+        expect(out.string).to include("MyWorker.perform(...)")
       end
 
       it "does not log any arguments if skip_logging_job_arguments is true" do
