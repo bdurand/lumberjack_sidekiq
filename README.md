@@ -162,6 +162,8 @@ Sidekiq.configure_server do |config|
 end
 ```
 
+Argument values in log messages are truncated to 60 characters with an ellipsis so that large values cannot overwhelm the logs. This limit does not apply to the values mapped with `arg_attributes`.
+
 You can disable logging any job arguments by setting `:skip_logging_job_arguments` to `true`.
 
 ```ruby

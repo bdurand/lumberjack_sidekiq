@@ -19,6 +19,9 @@ module Lumberjack::Sidekiq
   # Argument logging can be disabled globally by setting the `skip_logging_job_arguments` option in your
   # Sidekiq configuration.
   #
+  # Argument values longer than `MAX_ARG_LENGTH` characters are truncated with an ellipsis so that
+  # large values cannot overwhelm the logs.
+  #
   # You can override the messages themselves by setting the `job_logger_messages` option in your
   # Sidekiq configuration with lambdas for the `start`, `end`, and `failed` messages:
   #
@@ -49,6 +52,12 @@ module Lumberjack::Sidekiq
   #     config[:job_logger_message_formatter] = MyCustomFormatter.new(config)
   #   end
   class MessageFormatter
+    # Maximum number of characters of an argument value that will appear in a log message.
+    MAX_ARG_LENGTH = 60
+
+    # Marker appended to argument values that were too long to log in full.
+    TRUNCATION_INDICATOR = "…"
+
     # @param config [::Sidekiq::Config] The Sidekiq configuration.
     def initialize(config)
       @config = config
@@ -104,7 +113,8 @@ module Lumberjack::Sidekiq
 
     # Helper method to get the job arguments for logging. The return value is an array
     # of strings representing the inspect of each argument (i.e. `["foo", 12]` will be
-    # returned as `['"foo"'', '12']`).
+    # returned as `['"foo"'', '12']`). Values longer than `MAX_ARG_LENGTH` characters are
+    # truncated so that large arguments cannot overwhelm the logs.
     #
     # Arguments can be filtered by the `logging.args` option in the worker sidekiq options.
     #
@@ -124,7 +134,7 @@ module Lumberjack::Sidekiq
       elsif hide_filter
         hidden_args(job, args, Array(hide_filter))
       else
-        args.collect(&:inspect)
+        args.collect { |arg| display_arg(arg) }
       end
     end
 
@@ -196,7 +206,7 @@ module Lumberjack::Sidekiq
       args.each_with_index.map do |arg, index|
         arg_name = perform_args[index][1] if perform_args[index]
         if args_filter.include?(arg_name.to_s)
-          arg.inspect
+          display_arg(arg)
         else
           "-"
         end
@@ -231,8 +241,34 @@ module Lumberjack::Sidekiq
       end
 
       args.each_with_index.map do |arg, index|
-        positions.include?(index) ? "-" : arg.inspect
+        positions.include?(index) ? "-" : display_arg(arg)
       end
+    end
+
+    # Renders a single argument value for a log message. Values longer than
+    # MAX_ARG_LENGTH characters are truncated and marked with an ellipsis so that
+    # large arguments cannot overwhelm the logs.
+    #
+    # @param arg [Object] The job argument
+    # @return [String] The argument value for display
+    def display_arg(arg)
+      return truncate(arg.inspect) unless arg.is_a?(String)
+      return arg.inspect if arg.length <= MAX_ARG_LENGTH
+
+      # Strings are truncated before they are inspected so the quotes stay balanced.
+      # The indicator is added after inspecting so that it is never escaped.
+      "#{arg[0, MAX_ARG_LENGTH - 1].inspect.delete_suffix('"')}#{TRUNCATION_INDICATOR}\""
+    end
+
+    # Truncates a value to MAX_ARG_LENGTH characters, replacing the last character
+    # with the truncation indicator.
+    #
+    # @param value [String] The value to truncate
+    # @return [String] The value, no longer than MAX_ARG_LENGTH characters
+    def truncate(value)
+      return value if value.length <= MAX_ARG_LENGTH
+
+      "#{value[0, MAX_ARG_LENGTH - 1]}#{TRUNCATION_INDICATOR}"
     end
   end
 end

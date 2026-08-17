@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Failed jobs are now logged with the original error when Sidekiq's retry handler wraps it in a `Sidekiq::JobRetry::Handled` error.
+- Job argument values in log messages are now truncated to 60 characters with an ellipsis so that large values cannot overwhelm the logs. The limit does not apply to the values mapped with the `arg_attributes` option.
 
 ### Fixed
 

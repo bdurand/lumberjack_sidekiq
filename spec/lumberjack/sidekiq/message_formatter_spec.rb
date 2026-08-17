@@ -162,6 +162,47 @@ RSpec.describe Lumberjack::Sidekiq::MessageFormatter do
       expect(formatter.job_display_args(job)).to eq(['"foo"', "12"])
     end
 
+    describe "truncation" do
+      it "keeps values that are not longer than the maximum length" do
+        value = "a" * described_class::MAX_ARG_LENGTH
+        job = {"class" => "MyWorker", "args" => [value]}
+        expect(formatter.job_display_args(job)).to eq([value.inspect])
+      end
+
+      it "truncates long string values and keeps the quotes balanced" do
+        job = {"class" => "MyWorker", "args" => ["a" * 100]}
+        expected = "\"#{"a" * (described_class::MAX_ARG_LENGTH - 1)}…\""
+        expect(formatter.job_display_args(job)).to eq([expected])
+      end
+
+      it "truncates long string values that contain escaped characters" do
+        job = {"class" => "MyWorker", "args" => ["a\nb" * 100]}
+        display_arg = formatter.job_display_args(job).first
+        expect(display_arg).to start_with('"a\nb')
+        expect(display_arg).to end_with("…\"")
+      end
+
+      it "truncates long values that are not strings" do
+        job = {"class" => "MyWorker", "args" => [Array.new(100, 1)]}
+        display_arg = formatter.job_display_args(job).first
+        expect(display_arg.length).to eq(described_class::MAX_ARG_LENGTH)
+        expect(display_arg).to start_with("[1, 1, 1,")
+        expect(display_arg).to end_with("…")
+      end
+
+      it "truncates values in the args allow-list" do
+        job = {"class" => "MyWorker", "args" => ["a" * 100, 12], "logging" => {"args" => ["arg1"]}}
+        expected = "\"#{"a" * (described_class::MAX_ARG_LENGTH - 1)}…\""
+        expect(formatter.job_display_args(job)).to eq([expected, "-"])
+      end
+
+      it "truncates values that are not hidden by the hide_args deny-list" do
+        job = {"class" => "MyWorker", "args" => ["a" * 100, 12], "logging" => {"hide_args" => ["arg2"]}}
+        expected = "\"#{"a" * (described_class::MAX_ARG_LENGTH - 1)}…\""
+        expect(formatter.job_display_args(job)).to eq([expected, "-"])
+      end
+    end
+
     describe "hide_args deny-list" do
       it "hides args named in the logging.hide_args option" do
         job = {"class" => "MyWorker", "args" => ["foo", 12], "logging" => {"hide_args" => ["arg1"]}}
