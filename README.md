@@ -117,12 +117,22 @@ class MyWorker
     skip: false,             # Skip logging lifecycle events for this job
     skip_start: true,        # Skip the "Start job" lifecycle log message
     args: ["param1"],        # Only log specific arguments by name; can specify false to omit all args
+    hide_args: [:param2],    # Hide specific arguments by name or position; the args allow-list takes precedence when both are set
+    arg_attributes: {param1: "param.one"},  # Map perform arguments to log attributes on every entry in the job
     attributes: {custom: "value"}  # Add custom attributes to job logs
   }
 
   def perform(param1, param2)
     # Your job logic here
   end
+end
+```
+
+The `arg_attributes` mapping can also be set globally for all workers with the `:arg_attributes` configuration option. Worker options take precedence over the global mapping. The mapped attribute names are used as given and are not prefixed with `:log_attribute_prefix`.
+
+```ruby
+Sidekiq.configure_server do |config|
+  config[:arg_attributes] = {user_id: "user.id"}
 end
 ```
 
@@ -152,6 +162,8 @@ Sidekiq.configure_server do |config|
 end
 ```
 
+Argument values in log messages are truncated to 60 characters with an ellipsis so that large values cannot overwhelm the logs. This limit does not apply to the values mapped with `arg_attributes`.
+
 You can disable logging any job arguments by setting `:skip_logging_job_arguments` to `true`.
 
 ```ruby
@@ -160,7 +172,31 @@ Sidekiq.configure_server do |config|
 end
 ```
 
-You can customize the message format by implementing your own `Lumberjack::Sidekiq::MessageFormatter` and setting it in the configuration. You can use this if your existing log processing pipeline is expecting specific message formats.
+You can override the log messages for job lifecycle events with the `:job_logger_messages` option. You can use this if your existing log processing pipeline is expecting specific message formats. Any messages you don't override will use the default format.
+
+```ruby
+Sidekiq.configure_server do |config|
+  config[:job_logger_messages] = {
+    start: ->(job) { "Running #{job_info(job)}" },
+    end: ->(job, elapsed_time) { "Completed #{job_info(job)} in #{(elapsed_time * 1000).round(1)}ms" },
+    failed: ->(job, error, elapsed_time) { "#{worker_class(job)} raised #{error.class.name}: #{error.message}" }
+  }
+end
+```
+
+Each lambda is passed the job hash, plus the elapsed time in seconds for `end` and the error and elapsed time for `failed`. Lambdas that don't need the trailing arguments can declare fewer parameters:
+
+```ruby
+config[:job_logger_messages] = {end: ->(job) { "Completed #{job_info(job)}" }}
+```
+
+The lambdas are evaluated in the context of the message formatter, so they can use its helper methods:
+
+- `job_info(job)` - The worker class name and arguments (i.e. `MyWorker.perform("foo", 12)`)
+- `worker_class(job)` - The worker class name, honoring the `display_class` and `wrapped` job keys
+- `job_display_args(job)` - The job arguments as an array of strings, with the worker's `logging: {args: ...}` filtering applied
+
+For full control over message formatting, you can implement your own `Lumberjack::Sidekiq::MessageFormatter` and set it in the configuration.
 
 ```ruby
 Sidekiq.configure_server do |config|

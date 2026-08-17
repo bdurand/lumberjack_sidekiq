@@ -21,6 +21,22 @@
 #
 #   sidekiq_options logging: {args: [:arg1]} # only `arg1` will appear in the logs
 #
+# Job arguments can be added as log attributes on every log entry made during the job
+# by mapping `perform` parameter names to attribute names. The mapping can be set globally
+# in the Sidekiq configuration or per worker; worker options take precedence:
+#
+#   Sidekiq.configure_server do |config|
+#     config[:arg_attributes] = {user_id: "user.id"}
+#   end
+#
+#   sidekiq_options logging: {arg_attributes: {account_id: "account.id"}}
+#
+# The mapped attribute names are used as given and are not prefixed with the
+# `log_attribute_prefix` option.
+#
+# Jobs that fail are logged with the original error even when Sidekiq's retry handler
+# wraps it.
+#
 # @example Setting up the job logger
 #   Sidekiq.configure_server do |config|
 #     config.logger = Lumberjack::Logger.new(STDOUT)
@@ -33,8 +49,13 @@ class Lumberjack::Sidekiq::JobLogger
   def initialize(config)
     @config = config
     @logger = @config.logger
+    @context_logger = @logger if context_logger?(@logger)
     @prefix = @config[:log_attribute_prefix] || ""
     @message_formatter = @config[:job_logger_message_formatter] || Lumberjack::Sidekiq::MessageFormatter.new(@config)
+
+    @global_arg_attributes = {}
+    global_mapping = @config[:arg_attributes]
+    global_mapping.each { |key, value| @global_arg_attributes[key.to_s] = value } if global_mapping.is_a?(Hash)
   end
 
   # Sidekiq server middleware hook that logs job lifecycle events (start, completion, failure)
@@ -54,7 +75,7 @@ class Lumberjack::Sidekiq::JobLogger
 
       log_end_job(job, start, enqueued_time) unless skip_logging?(job)
     rescue Exception => err # rubocop:disable Lint/RescueException
-      log_failed_job(job, err, start, enqueued_time) unless skip_logging?(job)
+      log_failed_job(job, unwrap_error(err), start, enqueued_time) unless skip_logging?(job)
 
       raise
     end
@@ -68,10 +89,7 @@ class Lumberjack::Sidekiq::JobLogger
     return true if @config[:skip_start_job_logging]
     return true if skip_logging?(job)
 
-    logging_options = job["logging"]
-    return false unless logging_options.is_a?(Hash)
-
-    !!logging_options["skip_start"]
+    !!Lumberjack::Sidekiq.logging_options(job)["skip_start"]
   end
 
   # Determines if logging should be skipped entirely for the given job.
@@ -79,10 +97,7 @@ class Lumberjack::Sidekiq::JobLogger
   # @param job [Hash] The job hash containing job data
   # @return [Boolean] true if logging should be skipped
   def skip_logging?(job)
-    logging_options = job["logging"]
-    return false unless logging_options.is_a?(Hash)
-
-    !!logging_options["skip"]
+    !!Lumberjack::Sidekiq.logging_options(job)["skip"]
   end
 
   # Determines if enqueued time logging should be skipped globally.
@@ -100,7 +115,7 @@ class Lumberjack::Sidekiq::JobLogger
   # @yield The block to execute within the logging context
   # @return [void]
   def prepare(job, &block)
-    return yield unless @logger.is_a?(Lumberjack::Logger)
+    return yield unless @context_logger
 
     attributes = {
       "#{@prefix}class" => worker_class(job),
@@ -112,11 +127,14 @@ class Lumberjack::Sidekiq::JobLogger
     persisted_attributes = passthrough_attributes(job)
     attributes.merge!(persisted_attributes) if persisted_attributes.is_a?(Hash)
 
+    mapped_arg_attributes = arg_attributes(job)
+    attributes.merge!(mapped_arg_attributes) if mapped_arg_attributes
+
     Lumberjack.context do
-      @logger.tag(attributes) do
-        level = job.dig("logging", "level") || job["log_level"]
+      @context_logger.tag(attributes) do
+        level = Lumberjack::Sidekiq.logging_options(job)["level"] || job["log_level"]
         if level
-          @logger.with_level(level, &block)
+          @context_logger.with_level(level, &block)
         else
           yield
         end
@@ -126,49 +144,60 @@ class Lumberjack::Sidekiq::JobLogger
 
   private
 
-  # Logs the start of a job.
+  # Logs the start of a job. Nothing is logged if the message formatter does not
+  # return a message.
   #
   # @param job [Hash] The job hash containing job data
   def log_start_job(job)
     message = @message_formatter.start_job(job)
-    if @logger.is_a?(Lumberjack::Logger)
+    return if message.nil?
+
+    if @context_logger
       attributes = job_attributes(job)
-      @logger.info(message, attributes)
+      @context_logger.info(message, attributes)
     else
       @logger.info(message)
     end
   end
 
-  # Logs the successful completion of a job.
+  # Logs the successful completion of a job. Nothing is logged if the message
+  # formatter does not return a message.
   #
   # @param job [Hash] The job hash containing job data
   # @param start [Float] The start time from Process.clock_gettime
   # @param enqueued_time [Integer, nil] The enqueued time in milliseconds
   def log_end_job(job, start, enqueued_time)
-    message = @message_formatter.end_job(job, elapsed_time(start))
-    if @logger.is_a?(Lumberjack::Logger)
+    duration = elapsed_time(start)
+    message = @message_formatter.end_job(job, duration)
+    return if message.nil?
+
+    if @context_logger
       attributes = job_attributes(job)
-      attributes["#{@prefix}duration"] = elapsed_time(start)
+      attributes["#{@prefix}duration"] = duration
       attributes["#{@prefix}enqueued_ms"] = enqueued_time if enqueued_time
-      @logger.info(message, attributes)
+      @context_logger.info(message, attributes)
     else
       @logger.info(message)
     end
   end
 
-  # Logs the failure of a job.
+  # Logs the failure of a job. Nothing is logged if the message formatter does not
+  # return a message.
   #
   # @param job [Hash] The job hash containing job data
   # @param err [Exception] The exception that caused the failure
   # @param start [Float] The start time from Process.clock_gettime
   # @param enqueued_time [Integer, nil] The enqueued time in milliseconds
   def log_failed_job(job, err, start, enqueued_time)
-    message = @message_formatter.failed_job(job, err, elapsed_time(start))
-    if @logger.is_a?(Lumberjack::Logger)
+    duration = elapsed_time(start)
+    message = @message_formatter.failed_job(job, err, duration)
+    return if message.nil?
+
+    if @context_logger
       attributes = job_attributes(job)
-      attributes["#{@prefix}duration"] = elapsed_time(start)
+      attributes["#{@prefix}duration"] = duration
       attributes["#{@prefix}enqueued_ms"] = enqueued_time if enqueued_time
-      @logger.error(message, attributes)
+      @context_logger.error(message, attributes)
     else
       @logger.error(message)
     end
@@ -206,7 +235,7 @@ class Lumberjack::Sidekiq::JobLogger
     attributes = {}
 
     retry_count = job["retry_count"]
-    attributes["#{@prefix}retry_count"] = retry_count if retry_count && retry_count > 0
+    attributes["#{@prefix}retry_count"] = retry_count if retry_count
 
     attributes["#{@prefix}queue"] = job["queue"] if job["queue"]
 
@@ -230,6 +259,75 @@ class Lumberjack::Sidekiq::JobLogger
   # @param job [Hash] The job hash containing job data
   # @return [Hash, nil] The passthrough attributes or nil if none
   def passthrough_attributes(job)
-    job.dig("logging", "attributes")
+    Lumberjack::Sidekiq.logging_options(job)["attributes"]
+  end
+
+  # Sidekiq's retry handler wraps job errors before re-raising them out of the
+  # job execution stack. Unwrap the original error so logs show what actually failed.
+  #
+  # @param err [Exception] The rescued exception
+  # @return [Exception] The original error if it was wrapped by the retry handler
+  def unwrap_error(err)
+    if defined?(::Sidekiq::JobRetry::Handled) && err.is_a?(::Sidekiq::JobRetry::Handled) && err.cause
+      err.cause
+    else
+      err
+    end
+  end
+
+  # Maps job arguments to log attributes. The mapping is defined with the global
+  # `arg_attributes` Sidekiq option merged with the worker's `logging.arg_attributes`
+  # option. Mapping keys are perform method parameter names and values are the
+  # attribute names to set. The attribute names are used as given and are not
+  # prefixed with the log attribute prefix.
+  #
+  # @param job [Hash] The job hash containing job data
+  # @return [Hash, nil] The mapped attributes or nil if there are none
+  def arg_attributes(job)
+    mapping = arg_attributes_mapping(job)
+    return nil if mapping.empty?
+
+    args = job["args"]
+    return nil unless args.is_a?(Array)
+
+    perform_args = Lumberjack::Sidekiq.perform_parameters(job)
+    return nil if perform_args.nil?
+
+    attributes = {}
+    mapping.each do |arg_name, attribute_name|
+      next if attribute_name.nil? || attribute_name.to_s.empty?
+
+      index = perform_args.find_index { |param| param[1].to_s == arg_name }
+      next unless index && index < args.size
+
+      # Only positional parameters map to the job argument list. A splat parameter
+      # maps to all of the remaining arguments.
+      kind = perform_args[index][0]
+      next unless [:req, :opt, :rest].include?(kind)
+
+      attributes[attribute_name.to_s] = (kind == :rest) ? args[index..] : args[index]
+    end
+    attributes
+  end
+
+  # Builds the argument to attribute name mapping for a job. Worker level options
+  # take precedence over the global configuration.
+  #
+  # @param job [Hash] The job hash containing job data
+  # @return [Hash] The mapping of perform parameter names to attribute names
+  def arg_attributes_mapping(job)
+    job_mapping = Lumberjack::Sidekiq.logging_options(job)["arg_attributes"]
+    return @global_arg_attributes unless job_mapping.is_a?(Hash)
+
+    mapping = @global_arg_attributes.dup
+    job_mapping.each { |key, value| mapping[key.to_s] = value }
+    mapping
+  end
+
+  # Detect if a logger is a Lumberjack logger or a wrapped Lumberjack logger
+  def context_logger?(logger)
+    return true if logger.is_a?(Lumberjack::ContextLogger)
+
+    defined?(Lumberjack::Rails::BroadcastLoggerExtension) && logger.is_a?(Lumberjack::Rails::BroadcastLoggerExtension)
   end
 end

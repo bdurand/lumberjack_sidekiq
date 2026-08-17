@@ -36,18 +36,23 @@ class Lumberjack::Sidekiq::AttributePassthroughMiddleware
   def call(job_class_or_string, job, queue, redis_pool)
     return yield unless Sidekiq.logger.is_a?(Lumberjack::Logger)
 
-    job["logging"] ||= {}
-    attributes = job["logging"]["attributes"] || {}
-
+    new_attributes = {}
     unless @pass_through_attributes.empty?
       logger_attributes = logger_attributes_helper
       @pass_through_attributes.each do |attribute|
         value = json_value(logger_attributes[attribute])
-        attributes[attribute] = value unless value.nil?
+        new_attributes[attribute] = value unless value.nil?
       end
     end
 
-    job["logging"]["attributes"] = attributes unless attributes.empty?
+    unless new_attributes.empty?
+      # The logging hash may be the shared class-level sidekiq_options hash, so it
+      # must be copied rather than mutated to avoid leaking attributes across jobs.
+      logging = Lumberjack::Sidekiq.logging_options(job).dup
+      existing = logging["attributes"]
+      logging["attributes"] = existing.is_a?(Hash) ? existing.merge(new_attributes) : new_attributes
+      job["logging"] = logging
+    end
 
     yield
   end
