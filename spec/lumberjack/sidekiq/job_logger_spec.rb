@@ -3,11 +3,11 @@
 require "spec_helper"
 
 RSpec.describe Lumberjack::Sidekiq::JobLogger do
-  let(:logger) { Lumberjack::Logger.new(out) }
+  let(:logger) { Lumberjack::Logger.new(:test) }
+  let(:device) { logger.device }
   let(:config) { Sidekiq::Config.new.tap { |c| c.logger = logger } }
   let(:job_logger) { Lumberjack::Sidekiq::JobLogger.new(config) }
-  let(:job) { {"class" => "MyWorker", "args" => [1, 2, 3], "jid" => "12345"} }
-  let(:out) { StringIO.new }
+  let(:job) { {"class" => "MyWorker", "args" => [1, 2, 3], "jid" => "12345", "queue" => "default"} }
 
   describe "#prepare" do
     it "has the same signature as the Sidekiq::JobLogger#prepare method" do
@@ -20,10 +20,10 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
     end
 
     context "when logger is not a Lumberjack logger" do
-      let(:logger) { Logger.new(out) }
+      let(:logger) { ::Logger.new(StringIO.new) }
 
       it "does not error if the logger is not a Lumberjack logger" do
-        allow(Sidekiq).to receive(:logger).and_return(Logger.new(StringIO.new))
+        allow(Sidekiq).to receive(:logger).and_return(::Logger.new(StringIO.new))
         value = nil
         job_logger.prepare(job) do
           value = "foobar"
@@ -62,7 +62,7 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
     end
 
     it "can passthrough attributes set from the attribute passthrough middleware" do
-      client_logger = Lumberjack::Logger.new(StringIO.new)
+      client_logger = Lumberjack::Logger.new(:test)
       middleware = Lumberjack::Sidekiq::AttributePassthroughMiddleware.new(:user_id, :request_id)
       job["logging"] = {"attributes" => {"user_id" => 123, "request_id" => "abc"}}
       allow(Sidekiq).to receive(:logger).and_return(client_logger)
@@ -95,6 +95,20 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         value = "foobar"
       end
       expect(value).to eq("foobar")
+    end
+
+    context "when using lumberjack_rails" do
+      let(:broadcast_logger) { ActiveSupport::BroadcastLogger.new(logger) }
+      let(:config) { Sidekiq::Config.new.tap { |c| c.logger = broadcast_logger } }
+
+      it "adds attributes to the logger" do
+        skip("lumberjack_rails not loaded") unless defined?(Lumberjack::Rails)
+
+        job_logger.prepare(job) do
+          expect(logger.attribute_value("jid")).to eq("12345")
+          expect(logger.attribute_value("class")).to eq("MyWorker")
+        end
+      end
     end
 
     describe "arg attributes" do
@@ -180,7 +194,10 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
     end
 
     context "when logger is not a Lumberjack logger" do
-      let(:logger) { Logger.new(out) }
+      let(:out) { StringIO.new }
+      let(:logger) do
+        ::Logger.new(out, formatter: ->(severity, _time, _progname, message) { "#{severity}: #{message}\n" })
+      end
 
       it "logs the start of the job" do
         value = nil
@@ -188,14 +205,16 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
           value = "foobar"
         end
         expect(value).to eq("foobar")
-        expect(out.string).to include("Start Sidekiq job MyWorker.perform(1, 2, 3)")
+        expect(out.string.lines.map(&:chomp)).to include("INFO: Start Sidekiq job MyWorker.perform(1, 2, 3)")
       end
 
       it "logs the end of the job" do
         job_logger.call(job, "default") do
           # Simulate job processing
         end
-        expect(out.string).to include("Finished Sidekiq job MyWorker.perform(1, 2, 3)")
+        expect(out.string.lines.map(&:chomp)).to include(
+          a_string_matching(/\AINFO: Finished Sidekiq job MyWorker\.perform\(1, 2, 3\) in [\d.]+ms\z/)
+        )
       end
 
       it "logs the failure of the job" do
@@ -204,7 +223,9 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
             raise "Job failed"
           end
         end.to raise_error("Job failed")
-        expect(out.string).to include("Failed Sidekiq job MyWorker.perform(1, 2, 3)")
+        expect(out.string.lines.map(&:chomp)).to include(
+          a_string_matching(/\AERROR: Failed Sidekiq job MyWorker\.perform\(1, 2, 3\) due to RuntimeError in [\d.]+ms\z/)
+        )
       end
     end
 
@@ -212,7 +233,11 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
       job_logger.call(job, "default") do
         # Simulate job processing
       end
-      expect(out.string).to include("Start Sidekiq job MyWorker.perform(1, 2, 3)")
+      expect(device).to include(
+        severity: :info,
+        message: "Start Sidekiq job MyWorker.perform(1, 2, 3)",
+        attributes: {"queue" => "default"}
+      )
     end
 
     it "suppresses the start job log entry if the skip_start_job_logging config option is true" do
@@ -220,15 +245,26 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
       job_logger.call(job, "default") do
         # Simulate job processing
       end
-      expect(out.string).not_to include("Start Sidekiq job")
+      expect(device).not_to include(message: /\AStart Sidekiq job/)
+      expect(device).to include(message: /\AFinished Sidekiq job/)
     end
 
-    it "suppressed the start job log entry if the logging.skip_start_job job option is true" do
+    it "suppresses the start job log entry if the logging.skip_start_job job option is true" do
       job["logging"] = {"skip_start" => true}
       job_logger.call(job, "default") do
         # Simulate job processing
       end
-      expect(out.string).not_to include("Start Sidekiq job")
+      expect(device).not_to include(message: /\AStart Sidekiq job/)
+      expect(device).to include(message: /\AFinished Sidekiq job/)
+    end
+
+    it "suppresses the start job log entry if the formatter has no start message in the formatter" do
+      config[:job_logger_messages] = {start: ->(_job) {}}
+      job_logger.call(job, "default") do
+        # Simulate job processing
+      end
+      expect(device.entries.size).to eq(1)
+      expect(device).to include(message: /\AFinished Sidekiq job/)
     end
 
     it "suppresses the start job log entry if the logging.skip option is true" do
@@ -236,15 +272,59 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
       job_logger.call(job, "default") do
         # Simulate job processing
       end
-      expect(out.string).not_to include("Start Sidekiq job")
+      expect(device.entries).to be_empty
     end
 
     it "logs the end of the job with the queue name, duration" do
       job_logger.call(job, "default") do
-        sleep(0.1)
+        sleep(0.01)
       end
-      expect(out.string).to include("Finished Sidekiq job MyWorker.perform(1, 2, 3)")
-      expect(out.string).to match(/duration:\d{1,3}(\.\d{1,6})?/)
+      expect(device).to include(
+        severity: :info,
+        message: /\AFinished Sidekiq job MyWorker\.perform\(1, 2, 3\) in [\d.]+ms\z/,
+        attributes: {"queue" => "default", "duration" => (be >= 0.01)}
+      )
+    end
+
+    context "when using lumberjack_rails" do
+      let(:broadcast_logger) { ActiveSupport::BroadcastLogger.new(logger) }
+      let(:config) { Sidekiq::Config.new.tap { |c| c.logger = broadcast_logger } }
+
+      it "logs the start job log entry" do
+        job_logger.call(job, "default") do
+          sleep(0.01)
+        end
+        expect(device).to include(
+          severity: :info,
+          message: /Start Sidekiq job MyWorker/,
+          attributes: {"queue" => "default"}
+        )
+      end
+
+      it "logs the end job log entry" do
+        job_logger.call(job, "default") do
+          sleep(0.01)
+        end
+        expect(device).to include(
+          severity: :info,
+          message: /Finished Sidekiq job MyWorker/,
+          attributes: {"queue" => "default", "duration" => (be >= 0.01)}
+        )
+      end
+
+      it "logs the failed job log entry" do
+        expect {
+          job_logger.call(job, "default") do
+            sleep(0.01)
+            raise "Job failed"
+          end
+        }.to raise_error("Job failed")
+        expect(device).to include(
+          severity: :error,
+          message: /\Failed Sidekiq job MyWorker/,
+          attributes: {"queue" => "default", "duration" => (be >= 0.01)}
+        )
+      end
     end
 
     describe "enqueued time logging" do
@@ -253,7 +333,10 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         job_logger.call(job, "default") do
           # Simulate job processing
         end
-        expect(out.string).to match(/enqueued_ms:\d{2}\b/)
+        expect(device).to include(
+          message: /\AFinished Sidekiq job/,
+          attributes: {"enqueued_ms" => (be >= 10)}
+        )
       end
 
       it "includes the enqueued time in milliseconds if enqueued_at is a float" do
@@ -261,15 +344,19 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         job_logger.call(job, "default") do
           # Simulate job processing
         end
-        expect(out.string).to match(/enqueued_ms:\d{2}\b/)
+        expect(device).to include(
+          message: /\AFinished Sidekiq job/,
+          attributes: {"enqueued_ms" => (be >= 10)}
+        )
       end
 
       it "does not log enqueued time if skip_enqueued_time_logging is true" do
         config[:skip_enqueued_time_logging] = true
+        job["enqueued_at"] = (Time.now.to_f * 1000).floor - 10
         job_logger.call(job, "default") do
           # Simulate job processing
         end
-        expect(out.string).not_to include("enqueued_ms:")
+        expect(device.last_entry.attributes).not_to have_key("enqueued_ms")
       end
     end
 
@@ -278,29 +365,31 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
       job_logger.call(job, "default") do
         # Simulate job processing
       end
-      expect(out.string).not_to include("Finished Sidekiq job")
+      expect(device.entries).to be_empty
     end
 
     it "logs the failure of the job with the queue name and duration" do
       expect {
         job_logger.call(job, "default") do
-          sleep(0.1)
+          sleep(0.01)
           raise "Job failed"
         end
       }.to raise_error("Job failed")
-      expect(out.string).to include("Failed Sidekiq job MyWorker.perform(1, 2, 3)")
-      expect(out.string).to match(/duration:\d{1,3}(\.\d{1,6})?/)
+      expect(device).to include(
+        severity: :error,
+        message: /\AFailed Sidekiq job MyWorker\.perform\(1, 2, 3\) due to RuntimeError in [\d.]+ms\z/,
+        attributes: {"queue" => "default", "duration" => (be >= 0.01)}
+      )
     end
 
     it "suppresses the failure job log entry if the logging.skip job option is true" do
       job["logging"] = {"skip" => true}
       expect do
         job_logger.call(job, "default") do
-          sleep(0.1)
           raise "Job failed"
         end
       end.to raise_error("Job failed")
-      expect(out.string).not_to include("Failed Sidekiq job")
+      expect(device.entries).to be_empty
     end
 
     describe "retry error handling" do
@@ -312,8 +401,11 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
             raise Sidekiq::JobRetry::Handled, e.message
           end
         end.to raise_error(Sidekiq::JobRetry::Handled)
-        expect(out.string).to include("Failed Sidekiq job MyWorker.perform(1, 2, 3) due to ArgumentError")
-        expect(out.string).not_to include("Sidekiq::JobRetry::Handled")
+        expect(device).to include(
+          severity: :error,
+          message: /\AFailed Sidekiq job MyWorker\.perform\(1, 2, 3\) due to ArgumentError in [\d.]+ms\z/
+        )
+        expect(device).not_to include(message: /Sidekiq::JobRetry::Handled/)
       end
 
       it "logs the wrapping error when it has no cause" do
@@ -322,7 +414,10 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
             raise Sidekiq::JobRetry::Handled, "Job failed"
           end
         end.to raise_error(Sidekiq::JobRetry::Handled)
-        expect(out.string).to include("due to Sidekiq::JobRetry::Handled")
+        expect(device).to include(
+          severity: :error,
+          message: /\AFailed Sidekiq job MyWorker\.perform\(1, 2, 3\) due to Sidekiq::JobRetry::Handled in [\d.]+ms\z/
+        )
       end
 
       it "logs the job as failed when the job raises Sidekiq::JobRetry::Skip" do
@@ -331,7 +426,10 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
             raise Sidekiq::JobRetry::Skip, "interrupted"
           end
         end.to raise_error(Sidekiq::JobRetry::Skip)
-        expect(out.string).to include("Failed Sidekiq job MyWorker.perform(1, 2, 3) due to Sidekiq::JobRetry::Skip")
+        expect(device).to include(
+          severity: :error,
+          message: /\AFailed Sidekiq job MyWorker\.perform\(1, 2, 3\) due to Sidekiq::JobRetry::Skip in [\d.]+ms\z/
+        )
       end
 
       it "logs the original error when Skip wraps it" do
@@ -342,7 +440,10 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
             raise Sidekiq::JobRetry::Skip, "interrupted"
           end
         end.to raise_error(Sidekiq::JobRetry::Skip)
-        expect(out.string).to include("Failed Sidekiq job MyWorker.perform(1, 2, 3) due to ArgumentError")
+        expect(device).to include(
+          severity: :error,
+          message: /\AFailed Sidekiq job MyWorker\.perform\(1, 2, 3\) due to ArgumentError in [\d.]+ms\z/
+        )
       end
 
       it "does not log a failure for Skip if the logging.skip job option is true" do
@@ -352,7 +453,7 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
             raise Sidekiq::JobRetry::Skip, "interrupted"
           end
         end.to raise_error(Sidekiq::JobRetry::Skip)
-        expect(out.string).not_to include("Failed Sidekiq job")
+        expect(device.entries).to be_empty
       end
     end
 
@@ -361,7 +462,8 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
       job_logger.call(job, "default") do
         # Simulate job processing
       end
-      expect(out.string).to include("retry_count:2")
+      expect(device.entries.size).to eq(2)
+      expect(device.entries.map(&:attributes)).to all(include("retry_count" => 2))
     end
 
     it "includes the retry count if it is zero since that indicates the first retry" do
@@ -369,24 +471,44 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
       job_logger.call(job, "default") do
         # Simulate job processing
       end
-      expect(out.string).to include("retry_count:0")
+      expect(device.entries.map(&:attributes)).to all(include("retry_count" => 0))
     end
 
     it "logs the same duration in the message and the duration attribute" do
       job_logger.call(job, "default") do
         sleep(0.01)
       end
-      message_ms = out.string.match(/Finished Sidekiq job .* in ([\d.]+)ms/)[1].to_f
-      duration = out.string.match(/duration:([\d.]+)/)[1].to_f
-      expect((duration * 1000).round(1)).to eq(message_ms)
+      entry = device.last_entry
+      message_ms = entry.message[/ in ([\d.]+)ms\z/, 1].to_f
+      expect((entry.attributes["duration"] * 1000).round(1)).to eq(message_ms)
     end
 
     it "includes current Sidekiq::Context in the log attributes" do
-      config[:attribute_prefix] = "sidekiq."
-      job_logger.call(job, "default") do
-        Sidekiq::Context.current[:user_id] = 123
+      Sidekiq::Context.with({}) do
+        job_logger.call(job, "default") do
+          Sidekiq::Context.current[:user_id] = 123
+        end
       end
-      expect(out.string).to include("user_id:123")
+      expect(device).to include(
+        message: /\AFinished Sidekiq job/,
+        attributes: {"user_id" => 123}
+      )
+    end
+
+    it "prefixes the job attributes with the log_attribute_prefix option" do
+      config[:log_attribute_prefix] = "sidekiq."
+      job["retry_count"] = 1
+      job_logger.call(job, "default") do
+        # Simulate job processing
+      end
+      expect(device).to include(
+        message: /\AFinished Sidekiq job/,
+        attributes: {
+          "sidekiq.queue" => "default",
+          "sidekiq.retry_count" => 1,
+          "sidekiq.duration" => (be_a Float)
+        }
+      )
     end
 
     it "displays the display class name in the log entries" do
@@ -394,7 +516,7 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
       job_logger.call(job, "default") do
         # Simulate job processing
       end
-      expect(out.string).to include("Start Sidekiq job MyDisplayWorker.perform(1, 2, 3)")
+      expect(device).to include(message: "Start Sidekiq job MyDisplayWorker.perform(1, 2, 3)")
     end
 
     it "displays the wrapped job class name for wrapped jobs" do
@@ -402,7 +524,7 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
       job_logger.call(job, "default") do
         # Simulate job processing
       end
-      expect(out.string).to include("Start Sidekiq job MyWrappedWorker.perform(1, 2, 3)")
+      expect(device).to include(message: "Start Sidekiq job MyWrappedWorker.perform(1, 2, 3)")
     end
 
     describe "argument redaction" do
@@ -411,7 +533,7 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         job_logger.call(job, "default") do
           # Simulate job processing
         end
-        expect(out.string).to include("MyWorker.perform(...)")
+        expect(device).to include(message: "Start Sidekiq job MyWorker.perform(...)")
       end
 
       it "can provide an allow list of job arguments to include in the logs" do
@@ -419,7 +541,7 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         job_logger.call(job, "default") do
           # Simulate job processing
         end
-        expect(out.string).to include("MyWorker.perform(1, 2, -)")
+        expect(device).to include(message: "Start Sidekiq job MyWorker.perform(1, 2, -)")
       end
 
       it "redacts all arguments if the worker does not exist" do
@@ -428,7 +550,7 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         job_logger.call(job, "default") do
           # Simulate job processing
         end
-        expect(out.string).to include("NonExistentWorker.perform(...)")
+        expect(device).to include(message: "Start Sidekiq job NonExistentWorker.perform(...)")
       end
 
       it "gets the arg names from the non-display job class" do
@@ -437,7 +559,7 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         job_logger.call(job, "default") do
           # Simulate job processing
         end
-        expect(out.string).to include("MyDisplayWorker.perform(1, 2, -)")
+        expect(device).to include(message: "Start Sidekiq job MyDisplayWorker.perform(1, 2, -)")
       end
 
       it "redacts all arguments for wrapped jobs since the arg names cannot be resolved" do
@@ -447,7 +569,7 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         job_logger.call(job, "default") do
           # Simulate job processing
         end
-        expect(out.string).to include("MyWorker.perform(...)")
+        expect(device).to include(message: "Start Sidekiq job MyWorker.perform(...)")
       end
 
       it "does not log any arguments if skip_logging_job_arguments is true" do
@@ -455,8 +577,7 @@ RSpec.describe Lumberjack::Sidekiq::JobLogger do
         job_logger.call(job, "default") do
           # Simulate job processing
         end
-        expect(out.string).to include("MyWorker")
-        expect(out.string).not_to include(".perform")
+        expect(device).to include(message: "Start Sidekiq job MyWorker")
       end
     end
   end

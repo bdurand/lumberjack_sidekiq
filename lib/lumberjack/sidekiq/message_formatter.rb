@@ -37,6 +37,10 @@ module Lumberjack::Sidekiq
   #
   #   config[:job_logger_messages] = {end: ->(job) { "Completed #{job_info(job)}" }}
   #
+  # A lambda that returns nil suppresses the log entry so messages can be omitted per job:
+  #
+  #   config[:job_logger_messages] = {start: ->(job) { "Running #{job_info(job)}" unless job["queue"] == "low" }}
+  #
   # For full control over message formatting, you can override this class or provide your own
   # implementation that implements the `start_job`, `end_job`, and `failed_job` methods and set
   # it in your Sidekiq configuration:

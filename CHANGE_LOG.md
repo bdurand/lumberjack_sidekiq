@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Attributes are propagated to underlying `Lumberjack::Logger`'s when they are wrapped in a `ActiveSupport::BroadcastLogger`.
 - `AttributePassthroughMiddleware` no longer mutates the job's `logging` options hash in place. Because Sidekiq merges the class-level `sidekiq_options` hash into job payloads by reference, mutating it leaked passthrough attributes from one job into all subsequent jobs of the same worker class and raced across threads pushing jobs concurrently.
 - `AttributePassthroughMiddleware` no longer adds an empty `logging` hash to job payloads when there are no attributes to pass through.
 - `JobLogger` no longer raises an error when a job's `logging` option is not a hash (e.g. `sidekiq_options logging: false`).

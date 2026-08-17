@@ -49,6 +49,7 @@ class Lumberjack::Sidekiq::JobLogger
   def initialize(config)
     @config = config
     @logger = @config.logger
+    @context_logger = @logger if context_logger?(@logger)
     @prefix = @config[:log_attribute_prefix] || ""
     @message_formatter = @config[:job_logger_message_formatter] || Lumberjack::Sidekiq::MessageFormatter.new(@config)
 
@@ -114,7 +115,7 @@ class Lumberjack::Sidekiq::JobLogger
   # @yield The block to execute within the logging context
   # @return [void]
   def prepare(job, &block)
-    return yield unless @logger.is_a?(Lumberjack::Logger)
+    return yield unless @context_logger
 
     attributes = {
       "#{@prefix}class" => worker_class(job),
@@ -130,10 +131,10 @@ class Lumberjack::Sidekiq::JobLogger
     attributes.merge!(mapped_arg_attributes) if mapped_arg_attributes
 
     Lumberjack.context do
-      @logger.tag(attributes) do
+      @context_logger.tag(attributes) do
         level = Lumberjack::Sidekiq.logging_options(job)["level"] || job["log_level"]
         if level
-          @logger.with_level(level, &block)
+          @context_logger.with_level(level, &block)
         else
           yield
         end
@@ -143,20 +144,24 @@ class Lumberjack::Sidekiq::JobLogger
 
   private
 
-  # Logs the start of a job.
+  # Logs the start of a job. Nothing is logged if the message formatter does not
+  # return a message.
   #
   # @param job [Hash] The job hash containing job data
   def log_start_job(job)
     message = @message_formatter.start_job(job)
-    if @logger.is_a?(Lumberjack::Logger)
+    return if message.nil?
+
+    if @context_logger
       attributes = job_attributes(job)
-      @logger.info(message, attributes)
+      @context_logger.info(message, attributes)
     else
       @logger.info(message)
     end
   end
 
-  # Logs the successful completion of a job.
+  # Logs the successful completion of a job. Nothing is logged if the message
+  # formatter does not return a message.
   #
   # @param job [Hash] The job hash containing job data
   # @param start [Float] The start time from Process.clock_gettime
@@ -164,17 +169,20 @@ class Lumberjack::Sidekiq::JobLogger
   def log_end_job(job, start, enqueued_time)
     duration = elapsed_time(start)
     message = @message_formatter.end_job(job, duration)
-    if @logger.is_a?(Lumberjack::Logger)
+    return if message.nil?
+
+    if @context_logger
       attributes = job_attributes(job)
       attributes["#{@prefix}duration"] = duration
       attributes["#{@prefix}enqueued_ms"] = enqueued_time if enqueued_time
-      @logger.info(message, attributes)
+      @context_logger.info(message, attributes)
     else
       @logger.info(message)
     end
   end
 
-  # Logs the failure of a job.
+  # Logs the failure of a job. Nothing is logged if the message formatter does not
+  # return a message.
   #
   # @param job [Hash] The job hash containing job data
   # @param err [Exception] The exception that caused the failure
@@ -183,11 +191,13 @@ class Lumberjack::Sidekiq::JobLogger
   def log_failed_job(job, err, start, enqueued_time)
     duration = elapsed_time(start)
     message = @message_formatter.failed_job(job, err, duration)
-    if @logger.is_a?(Lumberjack::Logger)
+    return if message.nil?
+
+    if @context_logger
       attributes = job_attributes(job)
       attributes["#{@prefix}duration"] = duration
       attributes["#{@prefix}enqueued_ms"] = enqueued_time if enqueued_time
-      @logger.error(message, attributes)
+      @context_logger.error(message, attributes)
     else
       @logger.error(message)
     end
@@ -312,5 +322,12 @@ class Lumberjack::Sidekiq::JobLogger
     mapping = @global_arg_attributes.dup
     job_mapping.each { |key, value| mapping[key.to_s] = value }
     mapping
+  end
+
+  # Detect if a logger is a Lumberjack logger or a wrapped Lumberjack logger
+  def context_logger?(logger)
+    return true if logger.is_a?(Lumberjack::ContextLogger)
+
+    defined?(Lumberjack::Rails::BroadcastLoggerExtension) && logger.is_a?(Lumberjack::Rails::BroadcastLoggerExtension)
   end
 end
